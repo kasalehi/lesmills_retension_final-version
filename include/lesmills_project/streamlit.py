@@ -3,7 +3,8 @@ import pandas as pd
 import dill
 from pathlib import Path
 
-
+st.set_page_config(page_title="Main", initial_sidebar_state="expanded")
+st.title("🏋️ Les Mills Membership Prediction App")
 # -------- Load pipeline --------
 @st.cache_resource
 def load_pipeline():
@@ -24,8 +25,6 @@ def load_pipeline():
 def run_app():
 
     pipeline = load_pipeline()
-
-    st.title("LesMills Prediction Model")
 
     ID_COL = "MembershipID"
 

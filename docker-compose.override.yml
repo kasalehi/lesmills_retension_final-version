@@ -2,3 +2,16 @@ services:
   scheduler:
     ports:
       - "8501:8501"
+
+  portainer:
+    image: portainer/portainer-ce
+    container_name: astro_portainer
+    restart: always
+    ports:
+      - "9000:9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+
+volumes:
+  portainer_data:

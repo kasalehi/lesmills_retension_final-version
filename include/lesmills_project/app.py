@@ -89,11 +89,9 @@ def _reason_codes(feat: pd.DataFrame, k_weeks:int=6)->List[str]:
 # ----------- CatBoost training / scoring -----------
 
 from catboost import CatBoostClassifier
-<<<<<<< HEAD
 from sklearn.model_selection import GroupShuffleSplit
 from sklearn.metrics import roc_auc_score, average_precision_score
-=======
->>>>>>> 34f3a5f24a0abcc543b1c34e6fe2aca904298887
+
 
 def _build_dataset(df: pd.DataFrame, k_weeks:int=6):
     """Future-k label from 'churn_this_week' proxy built from drought≥8 or canceled==1 (if present)."""
@@ -131,11 +129,9 @@ def _build_dataset(df: pd.DataFrame, k_weeks:int=6):
     return meta, feat, X, y, cols, groups
 
 def train_catboost(df: pd.DataFrame, k_weeks:int=6, random_state:int=42):
-<<<<<<< HEAD
-=======
     from sklearn.model_selection import GroupShuffleSplit
     from sklearn.metrics import roc_auc_score, average_precision_score
->>>>>>> 34f3a5f24a0abcc543b1c34e6fe2aca904298887
+
     meta, feat, X, y, cols, groups = _build_dataset(df, k_weeks)
     gss = GroupShuffleSplit(test_size=0.2, n_splits=1, random_state=random_state)
     tr, te = next(gss.split(X, y, groups))
@@ -152,10 +148,6 @@ def train_catboost(df: pd.DataFrame, k_weeks:int=6, random_state:int=42):
     return model, cols, k_weeks
 
 def score_catboost(model: CatBoostClassifier, cols: List[str], k_weeks:int, df: pd.DataFrame) -> pd.DataFrame:
-<<<<<<< HEAD
-=======
-    
->>>>>>> 34f3a5f24a0abcc543b1c34e6fe2aca904298887
     feat = compute_member_features(df, ema_span=4, seasonality=True)
     X = feat[[c for c in cols if c in feat.columns]].astype(float).values
     ews = model.predict_proba(X)[:,1]
@@ -169,10 +161,6 @@ def score_catboost(model: CatBoostClassifier, cols: List[str], k_weeks:int, df: 
 # ----------- Outreach helpers (unchanged semantics) -----------
 
 def _pick_primary_reason(reasons: str) -> str:
-<<<<<<< HEAD
-=======
-    
->>>>>>> 34f3a5f24a0abcc543b1c34e6fe2aca904298887
     severity = ["drought_streak", "negative_momentum", "erratic_usage", "paused_state", "none"]
     parts = [x.strip() for x in str(reasons).split("|") if x and x.strip()]
     if not parts:

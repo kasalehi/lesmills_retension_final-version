@@ -3,16 +3,14 @@ apache-airflow-providers-microsoft-mssql
 catboost
 pandas
 matplotlib
-numpy
-<<<<<<< HEAD
 scikit-learn
 dill
 sqlalchemy
 pyodbc
 streamlit
 pathlib
-
-
-=======
 gcsfs
->>>>>>> 34f3a5f24a0abcc543b1c34e6fe2aca904298887
+joblib
+xgboost
+
+

@@ -308,7 +308,5 @@ Possible enhancements:
 
 # Author
 
-Keyvan Salehi
-
-Data Engineer / Data Scientist / Data Analyst
+Keyvan Salehi 2025/11/12
 Les Mills New Zealand

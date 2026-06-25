@@ -1,4 +1,4 @@
-FROM astrocrpublic.azurecr.io/runtime:3.1-5
+FROM astrocrpublic.azurecr.io/runtime:3.1-14
 
 USER root
 
@@ -17,7 +17,6 @@ RUN apt-get update && \
     curl -fsSL https://packages.microsoft.com/config/debian/12/prod.list | \
         tee /etc/apt/sources.list.d/mssql-release.list && \
     apt-get update && \
-<<<<<<< HEAD
     # Install ODBC DRIVER 17 for SQL Server
     ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql17 && \
     rm -rf /var/lib/apt/lists/*
@@ -33,10 +32,3 @@ COPY requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 # ========================================================
 EXPOSE 8501
-=======
-    # Install ODBC DRIVER 17 for SQL Server (what you asked for)
-    ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql17 && \
-    rm -rf /var/lib/apt/lists/*
-
-USER astro
->>>>>>> 34f3a5f24a0abcc543b1c34e6fe2aca904298887
