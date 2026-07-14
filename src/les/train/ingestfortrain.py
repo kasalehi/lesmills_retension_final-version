@@ -137,8 +137,6 @@ final_dataset AS (
         af.TotalAttendanceToDate,
         af.Visits_Last30d,
         af.Visits_Last90d,
-        bm.Transferred_IN,
-        bm.Transferred_OUT,
         bm.EndedWithinCoolingPeriod,
         bm.[End Date] AS end_date,
         ct.Churned
@@ -146,10 +144,11 @@ final_dataset AS (
     LEFT JOIN tenure_features tf ON bm.MembershipID = tf.MembershipID
     LEFT JOIN attendance_features af ON bm.MembershipID = af.MembershipID
     LEFT JOIN churn_target ct ON bm.MembershipID = ct.MembershipID
+    where bm.Transferred_OUT is null
 )
 
 SELECT * FROM final_dataset
-WHERE TotalAttendanceToDate > 0
+WHERE TotalAttendanceToDate > 0  
 ORDER BY MembershipID;
         """
 

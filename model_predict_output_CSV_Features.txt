@@ -1,0 +1,264 @@
+================================================================================
+              model_predict DAG - OUTPUT CSV FILE FEATURES
+================================================================================
+
+FILE NAME: predictions_YYYYMMDD_HHMMSS.csv
+LOCATION: /usr/local/airflow/include/artifacts/
+
+SOURCE: save_predictions() function in dags/model_predict.py (line 138-237)
+
+================================================================================
+                       OUTPUT CSV COLUMN STRUCTURE
+================================================================================
+
+SECTION 1: KEY VALIDATION COLUMNS (First 4 columns)
+================================================
+
+1. MembershipID (string)
+   - Member identifier
+   - Purpose: Link predictions back to member records
+   - Example: "12345"
+
+2. ChurnedPrediction (integer: 0, 1, or 2)
+   - Model prediction output (3-class classification)
+   - Class 0: Churn within 0-3 months
+   - Class 1: Churn within 3-6 months
+   - Class 2: All others (no churn or churn after 6 months)
+   - Purpose: Primary prediction result
+
+3. EndDate (date: YYYY-MM-DD)
+   - Membership end date (renamed from 'end_date')
+   - Purpose: Validation - compare with actual churn
+   - Note: NULL for active members
+
+4. RunDate (date: YYYY-MM-DD)
+   - Date when prediction was made
+   - Populated from Airflow Variable.get("run_date")
+   - Purpose: Track when predictions were generated
+
+
+SECTION 2: FEATURE COLUMNS (27 total features)
+==============================================
+
+DEMOGRAPHIC FEATURES (2):
+  5. Gender (string): Member gender (M/F)
+  6. Age (integer): Member age calculated from DOB
+
+MEMBERSHIP FEATURES (7):
+  7. SubCategory (string): Membership subcategory
+  8. Category (string): Contract type
+  9. Channel (string): Sales channel
+  10. ClubName (string): Home club
+  11. MembershipTypeDesc (string): Membership type description
+  12. RegularPayment (decimal): Regular payment amount
+  13. Amount (decimal): Standard amount
+
+FINANCIAL FEATURES (6):
+  14. Base Amount (decimal): Base payment amount
+  15. PaymentFrequency (string): Payment frequency (e.g., weekly, monthly)
+  16. Term (string): Contract term
+  17. TermDays (integer): Term duration in days
+  18. BillingDay (integer): Day of month for billing
+  19. Lump Sum Flag (integer): Binary flag (0/1)
+
+TENURE FEATURES (3):
+  20. TenureDays (integer): Days since membership started
+  21. DaysSinceOriginalStart (integer): Days since original start date
+  22. DaysSinceLastAccessed (integer): Days since last visit (capped at 999999 if NULL)
+
+ENGAGEMENT FEATURES (4):
+  23. TotalAttendanceToDate (integer): Total lifetime visits
+  24. Visits_Last30d (integer): Visits in past 30 days
+  25. Visits_Last90d (integer): Visits in past 90 days
+  26. (Weekly engagement not included - aggregated in above metrics)
+
+TRANSFER FEATURES (3):
+  27. Transferred_IN (integer): Binary flag (0/1)
+  28. Transferred_OUT (integer): Binary flag (0/1)
+  29. EndedWithinCoolingPeriod (integer): Binary flag (0/1)
+
+SNAPSHOT FEATURES (2) - Added from snapshots_task():
+  30. ews_pct (decimal): Early Warning Score percentage
+  31. risk_band (string): Risk classification band
+
+
+TOTAL COLUMNS: 31
+  - 4 key validation columns
+  - 27 feature columns
+
+
+================================================================================
+                        COLUMN ORDER IN CSV
+================================================================================
+
+Position 1:  MembershipID
+Position 2:  ChurnedPrediction
+Position 3:  EndDate
+Position 4:  RunDate
+Position 5:  Gender
+Position 6:  Age
+Position 7:  SubCategory
+Position 8:  Category
+Position 9:  Channel
+Position 10: ClubName
+Position 11: MembershipTypeDesc
+Position 12: RegularPayment
+Position 13: Amount
+Position 14: Base Amount
+Position 15: PaymentFrequency
+Position 16: Term
+Position 17: TermDays
+Position 18: BillingDay
+Position 19: Lump Sum Flag
+Position 20: DaysSinceLastAccessed
+Position 21: TenureDays
+Position 22: DaysSinceOriginalStart
+Position 23: TotalAttendanceToDate
+Position 24: Visits_Last30d
+Position 25: Visits_Last90d
+Position 26: Transferred_IN
+Position 27: Transferred_OUT
+Position 28: EndedWithinCoolingPeriod
+Position 29: ews_pct
+Position 30: risk_band
+Position 31: (Additional columns if any)
+
+
+================================================================================
+                     PREDICTION CLASS MAPPING
+================================================================================
+
+ChurnedPrediction = 0:
+  Meaning: High risk of churn within 0-3 months
+  Action: Urgent retention needed
+  Percentage: ~30-35% of predictions typically
+
+ChurnedPrediction = 1:
+  Meaning: Medium risk of churn within 3-6 months
+  Action: Standard retention campaign
+  Percentage: ~20-25% of predictions typically
+
+ChurnedPrediction = 2:
+  Meaning: Low risk or no churn / churn after 6 months
+  Action: Regular monitoring
+  Percentage: ~40-50% of predictions typically
+
+
+================================================================================
+                        CSV DATA SAMPLE
+================================================================================
+
+MembershipID | ChurnedPrediction | EndDate    | RunDate    | Gender | Age | SubCategory | ...
+12345        | 0                 | 2026-03-15 | 2026-01-01 | M      | 35  | Standard    | ...
+12346        | 2                 | NULL       | 2026-01-01 | F      | 42  | Premium     | ...
+12347        | 1                 | 2026-04-20 | 2026-01-01 | M      | 28  | Standard    | ...
+12348        | 0                 | 2026-02-28 | 2026-01-01 | F      | 51  | Corporate   | ...
+
+
+================================================================================
+                          HOW CSV IS CREATED
+================================================================================
+
+FLOW:
+1. read_data_task()
+   → Gets weekly engagement data
+
+2. snapshots_task()
+   → Calculates ews_pct and risk_band from engagement
+
+3. ingest_task()
+   → Retrieves 25 SQL features
+   → INNER JOIN with snapshots (adds ews_pct, risk_band)
+   → Removes 'Churned' column (we're predicting, not training)
+   → Outputs: df_merged_*.parquet (27 feature columns)
+
+4. model_task()
+   → Loads trained model (model_balanced_*.pkl)
+   → Makes predictions on 27 features
+   → Outputs: ChurnedPrediction (0, 1, or 2)
+
+5. save_task() → save_predictions()
+   → Loads features from df_merged_*.parquet (27 columns)
+   → Adds ChurnedPrediction column from model output
+   → Adds RunDate from Airflow Variable
+   → Renames end_date → EndDate
+   → Reorders columns: MembershipID | ChurnedPrediction | EndDate | RunDate | [features]
+   → Saves to CSV: predictions_YYYYMMDD_HHMMSS.csv
+
+
+================================================================================
+                     CODE REFERENCE
+================================================================================
+
+Key function: save_predictions() in dags/model_predict.py
+
+Column reordering (lines 207-214):
+  key_cols = ['MembershipID', 'ChurnedPrediction', 'EndDate', 'RunDate']
+  other_cols = [all remaining feature columns]
+  column_order = key_cols + other_cols
+
+CSV output (line 219):
+  result_df.to_csv(csv_path, index=False)
+
+
+================================================================================
+                          USAGE EXAMPLES
+================================================================================
+
+EXAMPLE 1: Find all high-risk members (Churn 0-3 months)
+  SELECT MembershipID, EndDate, ews_pct, risk_band
+  FROM predictions_YYYYMMDD_HHMMSS.csv
+  WHERE ChurnedPrediction = 0
+  ORDER BY ews_pct DESC;
+
+EXAMPLE 2: Validate predictions (compare predicted vs actual churn)
+  SELECT
+    MembershipID,
+    ChurnedPrediction,
+    EndDate,
+    CASE WHEN EndDate > RunDate AND EndDate <= DATEADD(MONTH, 3, RunDate) THEN 'Actual_Churn_0-3mo'
+         WHEN EndDate > DATEADD(MONTH, 3, RunDate) AND EndDate <= DATEADD(MONTH, 6, RunDate) THEN 'Actual_Churn_3-6mo'
+         ELSE 'No_Churn_Or_Later'
+    END AS ActualChurn
+  FROM predictions_YYYYMMDD_HHMMSS.csv;
+
+EXAMPLE 3: Find members with high EWS but low risk band
+  SELECT MembershipID, ews_pct, risk_band, ChurnedPrediction
+  FROM predictions_YYYYMMDD_HHMMSS.csv
+  WHERE ews_pct > 0.8 AND risk_band = 'Low'
+  LIMIT 10;
+
+EXAMPLE 4: Export for retention campaign
+  SELECT MembershipID, Gender, Age, ClubName, ews_pct
+  FROM predictions_YYYYMMDD_HHMMSS.csv
+  WHERE ChurnedPrediction IN (0, 1)
+  ORDER BY ews_pct DESC;
+
+
+================================================================================
+                         IMPORTANT NOTES
+================================================================================
+
+1. NO Churned column in output
+   - Only in training data (ingestfortrain.py)
+   - Predictions use ChurnedPrediction instead
+
+2. Features are NOT scaled/transformed
+   - Raw values in CSV (as they came from SQL)
+   - Model was trained with preprocessor, but output CSV has original values
+
+3. EndDate can be NULL
+   - NULL means member is still active (no end date)
+   - Compare with RunDate for churn calculation
+
+4. All rows in CSV are eligible members
+   - >= 12 visits in past 12 months (from read_data eligibility)
+   - Have snapshot data (ews_pct, risk_band)
+
+5. Row count should match ingest_task output
+   - Filtered by: Active members + Eligible engagement + Has snapshots
+   - Typically 80-90% of total active member base
+
+================================================================================
+END OF OUTPUT CSV FEATURES DOCUMENTATION
+================================================================================

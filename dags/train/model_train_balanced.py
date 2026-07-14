@@ -8,7 +8,7 @@ import pandas as pd
 import joblib
 import json
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
 from sklearn.preprocessing import LabelEncoder, StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
@@ -66,7 +66,7 @@ def transform_and_train_balanced():
         # DROP COLUMNS WITH DATA LEAKAGE + WEAK FEATURES
         # ===================================
         # Remove data leakage columns
-        leakage_cols = ['DaysToContractEnd']  # 0.866 correlation = direct proxy for churn date
+        leakage_cols = ['DaysToContractEnd','end_date']  # 0.866 correlation = direct proxy for churn date
 
         pause_cols = ['WeeksPausedToDate','PauseCount','TotalDaysPaused','CurrentlyPaused','DaysSinceLastPauseEnded','LongestPauseDuration','AvgPauseDuration']
         covid_cols = ['COVID19_PauseCount']
@@ -106,7 +106,7 @@ def transform_and_train_balanced():
                 ]), numeric_features),
                 ('cat', Pipeline([
                     ('imputer', SimpleImputer(strategy='most_frequent')),  # Fill NaN with most common
-                    ('encoder', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
+                    ('encoder', OneHotEncoder(handle_unknown='ignore', sparse_output=True))
                 ]), categorical_features)
             ],
             remainder='drop'
@@ -150,6 +150,21 @@ def transform_and_train_balanced():
 
         print(f"✅ Model Accuracy (Balanced): {accuracy:.4f}")
 
+        # Calculate Confusion Matrix
+        cm = confusion_matrix(y_test, y_pred)
+
+        # Calculate Classification Report
+        class_names = ['Class 0 (Churn 0-3mo)', 'Class 1 (Churn 3-6mo)', 'Class 2 (No Churn)']
+        class_report = classification_report(y_test, y_pred, target_names=class_names, digits=4)
+
+        # Per-class metrics
+        report_dict = classification_report(y_test, y_pred, target_names=class_names, output_dict=True)
+
+        print(f"\n📊 CONFUSION MATRIX:")
+        print(cm)
+        print(f"\n📋 CLASSIFICATION REPORT:")
+        print(class_report)
+
         # =========================
         # SAVE ARTIFACTS
         # =========================
@@ -172,13 +187,57 @@ def transform_and_train_balanced():
         with open(metrics_path, "w") as f:
             json.dump(metrics, f, indent=4)
 
-        # Save log
+        # Save log with detailed metrics
         log_path = ARTIFACT_DIR / f"log_balanced_{timestamp}.txt"
         with open(log_path, "w") as f:
+            f.write("=" * 80 + "\n")
+            f.write("MODEL TRAINING REPORT - BALANCED DATA\n")
+            f.write("=" * 80 + "\n\n")
+
+            f.write("BASIC INFORMATION:\n")
+            f.write("-" * 80 + "\n")
             f.write(f"Model Type: Balanced (2024 + 2025 + 2026)\n")
-            f.write(f"Accuracy: {accuracy:.4f}\n")
-            f.write(f"Rows: {len(df)}\n")
             f.write(f"Timestamp: {timestamp}\n")
+            f.write(f"Total Rows: {len(df)}\n")
+            f.write(f"Test Set Size: {len(x_test)}\n")
+            f.write(f"Train Set Size: {len(x_train)}\n\n")
+
+            f.write("OVERALL METRICS:\n")
+            f.write("-" * 80 + "\n")
+            f.write(f"Accuracy: {accuracy:.4f} ({accuracy*100:.2f}%)\n\n")
+
+            f.write("CONFUSION MATRIX:\n")
+            f.write("-" * 80 + "\n")
+            f.write("Rows: True Labels | Columns: Predicted Labels\n")
+            f.write("       Class 0  Class 1  Class 2\n")
+            for i, row in enumerate(cm):
+                f.write(f"Class {i}:  {row[0]:6d}  {row[1]:6d}  {row[2]:6d}\n")
+            f.write("\n")
+
+            f.write("CLASSIFICATION REPORT:\n")
+            f.write("-" * 80 + "\n")
+            f.write(class_report)
+            f.write("\n")
+
+            f.write("PER-CLASS METRICS:\n")
+            f.write("-" * 80 + "\n")
+            for class_name in class_names:
+                if class_name in report_dict:
+                    metrics = report_dict[class_name]
+                    f.write(f"\n{class_name}:\n")
+                    f.write(f"  Precision: {metrics.get('precision', 0):.4f}\n")
+                    f.write(f"  Recall:    {metrics.get('recall', 0):.4f}\n")
+                    f.write(f"  F1-Score:  {metrics.get('f1-score', 0):.4f}\n")
+                    f.write(f"  Support:   {int(metrics.get('support', 0))}\n")
+
+            f.write("\n" + "=" * 80 + "\n")
+            f.write("CLASS DISTRIBUTION:\n")
+            f.write("-" * 80 + "\n")
+            class_dist = pd.Series(y_test).value_counts().sort_index()
+            for class_label, count in class_dist.items():
+                pct = (count / len(y_test)) * 100
+                f.write(f"Class {class_label}: {count:6d} ({pct:6.2f}%)\n")
+            f.write("\n")
 
         print("📦 Artifacts saved (Balanced):")
         print(model_path)

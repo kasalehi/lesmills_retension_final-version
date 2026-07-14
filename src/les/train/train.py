@@ -12,11 +12,9 @@ classification_report,
 confusion_matrix,
 f1_score,
 balanced_accuracy_score,
-roc_auc_score,
+roc_auc_score
 )
-from sklearn.ensemble import GradientBoostingClassifier
 from xgboost import XGBClassifier
-
 from src.les.logger import logging
 from src.les.exception import CustomException
 
@@ -28,20 +26,14 @@ class ModelConfig:
 
         # ❌ RandomForest REMOVED
         param_grids: dict = field(default_factory=lambda: {
-            "gradient_boosting": {
-                "clf__n_estimators": [100, 200],
-                "clf__learning_rate": [0.01, 0.1],
-                "clf__max_depth": [3, 5],
-            },
             "xgboost": {
-                    "clf__n_estimators": [200, 400],
-                    "clf__max_depth": [3, 5, 7],
-                    "clf__learning_rate": [0.03, 0.05, 0.1],
+                    "clf__n_estimators": [200,300,400,500],
+                    "clf__max_depth": [2,3, 5, 7],
+                    "clf__learning_rate": [0.03, 0.05, 0.1, 0.01, 0.001],
                 },
         })
 
         models: dict = field(default_factory=lambda: {
-            "gradient_boosting": GradientBoostingClassifier(random_state=42),
             "xgboost":XGBClassifier(
                 random_state=42,
                 objective="multi:softprob",

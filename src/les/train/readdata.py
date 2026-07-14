@@ -22,7 +22,7 @@ def read_data():
         FROM fact.LMNZ_ALLMemberships AS fam
         WHERE fam.[ActiveOn Date] <= @TestDate
           AND (fam.[End Date] >= @TestDate OR fam.[End Date] IS NULL)
-          AND fam.SubCategory NOT IN ('Unvaccinated','Prepay', 'Complimentary') and Origin not in ('Transfer (Club to Club)')
+          AND fam.SubCategory NOT IN ('Unvaccinated','Prepay', 'Complimentary')
           AND fam.Category IN ('Contract')
     ),
     labels AS (
