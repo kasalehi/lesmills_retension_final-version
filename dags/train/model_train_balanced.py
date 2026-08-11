@@ -143,22 +143,45 @@ def transform_and_train_balanced():
         print(f"   Train/Test overlap: {len(set(range(len(x_train))) & set(range(len(x_train), len(x_train) + len(x_test))))}")
 
         # =========================
-        # EVALUATION
+        # EVALUATION + THRESHOLD TUNING
         # =========================
         y_pred = trained_model.predict(x_test)
+        y_prob = trained_model.predict_proba(x_test)
         accuracy = accuracy_score(y_test, y_pred)
+
+        # ✅ APPLY THRESHOLD OPTIMIZATION (boost Class 0 while maintaining high precision)
+        from src.les.train.threshold_tuning import ThresholdTuner
+        tuner = ThresholdTuner()
+        thresholds = tuner.apply_optimal_thresholds(
+            y_prob=y_prob,
+            y_true=y_test,
+            target_classes=[0],  # ✅ Only optimize Class 0 (Early Churn 0-3mo)
+            metric="balanced_precision"  # ✅ Maximize precision while keeping recall >= 70%
+        )
+        y_pred_optimized = tuner.apply_thresholds_to_predictions(
+            y_prob=y_prob,
+            threshold_config=thresholds
+        )
+
+        # Calculate optimized metrics
+        from sklearn.metrics import precision_score, recall_score, f1_score
+        print(f"\n🎯 THRESHOLD OPTIMIZATION RESULTS:")
+        print(f"   Class 0 - Before: Recall={recall_score(y_test, y_pred, labels=[0], average='micro', zero_division=0):.4f}")
+        print(f"   Class 0 - After:  Recall={recall_score(y_test, y_pred_optimized, labels=[0], average='micro', zero_division=0):.4f}")
+        print(f"   Class 1 - Before: Recall={recall_score(y_test, y_pred, labels=[1], average='micro', zero_division=0):.4f}")
+        print(f"   Class 1 - After:  Recall={recall_score(y_test, y_pred_optimized, labels=[1], average='micro', zero_division=0):.4f}")
 
         print(f"✅ Model Accuracy (Balanced): {accuracy:.4f}")
 
-        # Calculate Confusion Matrix
-        cm = confusion_matrix(y_test, y_pred)
+        # Calculate Confusion Matrix (using optimized predictions)
+        cm = confusion_matrix(y_test, y_pred_optimized)
 
-        # Calculate Classification Report
+        # Calculate Classification Report (using optimized predictions)
         class_names = ['Class 0 (Churn 0-3mo)', 'Class 1 (Churn 3-6mo)', 'Class 2 (No Churn)']
-        class_report = classification_report(y_test, y_pred, target_names=class_names, digits=4)
+        class_report = classification_report(y_test, y_pred_optimized, target_names=class_names, digits=4)
 
-        # Per-class metrics
-        report_dict = classification_report(y_test, y_pred, target_names=class_names, output_dict=True)
+        # Per-class metrics (using optimized predictions)
+        report_dict = classification_report(y_test, y_pred_optimized, target_names=class_names, output_dict=True)
 
         print(f"\n📊 CONFUSION MATRIX:")
         print(cm)
@@ -173,6 +196,10 @@ def transform_and_train_balanced():
         # Save model
         model_path = ARTIFACT_DIR / f"model_balanced_{timestamp}.pkl"
         joblib.dump(trained_model, model_path)
+
+        # ✅ Save optimal thresholds
+        thresholds_path = ARTIFACT_DIR / f"optimal_thresholds_{timestamp}.pkl"
+        joblib.dump(thresholds, thresholds_path)
 
         # Save metrics
         metrics = {

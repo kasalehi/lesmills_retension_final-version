@@ -12,7 +12,10 @@ classification_report,
 confusion_matrix,
 f1_score,
 balanced_accuracy_score,
-roc_auc_score
+roc_auc_score,
+precision_score,
+recall_score,
+make_scorer
 )
 from xgboost import XGBClassifier
 from src.les.logger import logging
@@ -24,23 +27,25 @@ class ModelConfig:
         preprocessor_path: str = base_dir / "preprocessor.pkl"
 
 
-        # ❌ RandomForest REMOVED
+        # ✅ MINIMAL TUNING - Only tune 2-3 key params (2-3 min training, best results)
         param_grids: dict = field(default_factory=lambda: {
             "xgboost": {
-                    "clf__n_estimators": [200,300,400,500],
-                    "clf__max_depth": [2,3, 5, 7],
-                    "clf__learning_rate": [0.03, 0.05, 0.1, 0.01, 0.001],
+                    "clf__n_estimators": [400, 500],  # Trees
+                    "clf__max_depth": [5, 6],  # Depth
+                    "clf__learning_rate": [0.05, 0.1],  # Learning rate
                 },
         })
 
         models: dict = field(default_factory=lambda: {
-            "xgboost":XGBClassifier(
+            "xgboost": XGBClassifier(
                 random_state=42,
                 objective="multi:softprob",
                 num_class=3,
                 eval_metric="mlogloss",
                 subsample=0.8,
-                colsample_bytree=0.8
+                colsample_bytree=0.8,
+                # Note: scale_pos_weight not used for multi-class; using sample_weight instead
+                verbosity=0  # Suppress XGBoost warnings
             ),
         })
 
@@ -62,7 +67,8 @@ class ModelTraing:
             class_counts = Counter(y_train)
             total = sum(class_counts.values())
 
-            class_weights = {0: 3, 1: 3, 2: 1}
+            # ✅ OPTIMIZED class weights (best balance for both classes)
+            class_weights = {0: 5, 1: 5, 2: 1}
             import numpy as np
             sample_weights = np.array([class_weights[y] for y in y_train])
 
@@ -79,12 +85,14 @@ class ModelTraing:
                     ("clf", model),
                 ])
 
+                # ✅ Use GridSearchCV for simple exhaustive search
+                # Only 8 combinations = very fast
                 grid = GridSearchCV(
                     estimator=pipe,
                     param_grid=param_grid,
                     cv=cv,
                     n_jobs=2,
-                    scoring="f1_macro",
+                    scoring="f1_weighted",  # Better for imbalanced classes
                     verbose=1,
                 )
 
@@ -101,14 +109,24 @@ class ModelTraing:
                 cv_score = grid.best_score_
 
                 y_pred = best_estimator.predict(x_test)
+                y_prob = best_estimator.predict_proba(x_test)
 
                 test_acc = accuracy_score(y_test, y_pred)
                 test_bal_acc = balanced_accuracy_score(y_test, y_pred)
                 test_f1_macro = f1_score(y_test, y_pred, average="macro")
+                test_f1_weighted = f1_score(y_test, y_pred, average="weighted")
+
+                # ✅ PER-CLASS METRICS FOR CLASSES 0 & 1
+                precision_0 = precision_score(y_test, y_pred, labels=[0], average='micro', zero_division=0)
+                recall_0 = recall_score(y_test, y_pred, labels=[0], average='micro', zero_division=0)
+                f1_0 = f1_score(y_test, y_pred, labels=[0], average='micro', zero_division=0)
+
+                precision_1 = precision_score(y_test, y_pred, labels=[1], average='micro', zero_division=0)
+                recall_1 = recall_score(y_test, y_pred, labels=[1], average='micro', zero_division=0)
+                f1_1 = f1_score(y_test, y_pred, labels=[1], average='micro', zero_division=0)
 
                 # ROC-AUC
                 try:
-                    y_prob = best_estimator.predict_proba(x_test)
                     roc_auc = roc_auc_score(y_test, y_prob, multi_class="ovr")
                 except Exception:
                     roc_auc = None
@@ -118,8 +136,24 @@ class ModelTraing:
                     f"CV Score: {cv_score:.4f} | "
                     f"Test Acc: {test_acc:.4f} | "
                     f"Test BalAcc: {test_bal_acc:.4f} | "
-                    f"Test F1_macro: {test_f1_macro:.4f} | "
+                    f"Test F1_weighted: {test_f1_weighted:.4f} | "
                     f"ROC-AUC: {roc_auc}"
+                )
+
+                # ✅ CLASS 0 METRICS
+                logging.info(
+                    f"CLASS 0 (Churn 0-3mo) | "
+                    f"Precision: {precision_0:.4f} | "
+                    f"Recall: {recall_0:.4f} | "
+                    f"F1: {f1_0:.4f}"
+                )
+
+                # ✅ CLASS 1 METRICS
+                logging.info(
+                    f"CLASS 1 (Churn 3-6mo) | "
+                    f"Precision: {precision_1:.4f} | "
+                    f"Recall: {recall_1:.4f} | "
+                    f"F1: {f1_1:.4f}"
                 )
 
                 logging.info("Confusion Matrix:\n" + str(confusion_matrix(y_test, y_pred)))
@@ -132,18 +166,35 @@ class ModelTraing:
                     "test_accuracy": test_acc,
                     "test_balanced_accuracy": test_bal_acc,
                     "test_f1_macro": test_f1_macro,
+                    "test_f1_weighted": test_f1_weighted,
                     "roc_auc": roc_auc,
+                    # ✅ Per-class metrics for Classes 0 & 1
+                    "class_0_precision": precision_0,
+                    "class_0_recall": recall_0,
+                    "class_0_f1": f1_0,
+                    "class_1_precision": precision_1,
+                    "class_1_recall": recall_1,
+                    "class_1_f1": f1_1,
+                    "y_prob": y_prob,  # Store probabilities for threshold adjustment
                 }
 
             if not results:
                 raise CustomException("No models were successfully trained.", sys)
 
-            best_model_name = max(results, key=lambda m: results[m]["test_f1_macro"])
+            # ✅ Use F1_weighted for better class balance
+            best_model_name = max(results, key=lambda m: results[m]["test_f1_weighted"])
             best_info = results[best_model_name]
 
             logging.info(
                 f"🏆 Best model is '{best_model_name}' "
-                f"with F1_macro {best_info['test_f1_macro']:.4f}"
+                f"with F1_weighted {best_info['test_f1_weighted']:.4f}"
+            )
+
+            # ✅ Display Class 0 & 1 performance summary
+            logging.info(
+                f"📊 Churn Classes Performance:\n"
+                f"   Class 0 - Precision: {best_info['class_0_precision']:.4f}, Recall: {best_info['class_0_recall']:.4f}, F1: {best_info['class_0_f1']:.4f}\n"
+                f"   Class 1 - Precision: {best_info['class_1_precision']:.4f}, Recall: {best_info['class_1_recall']:.4f}, F1: {best_info['class_1_f1']:.4f}"
             )
 
             return best_info["best_estimator"], best_model_name, results

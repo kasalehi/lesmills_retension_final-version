@@ -1,0 +1,11 @@
+{
+    "accuracy": 0.7953608854350642,
+    "rows": 42461,
+    "timestamp": "20260807_123527",
+    "model_type": "balanced",
+    "class_distribution": {
+        "1": 11900,
+        "2": 10561,
+        "3": 20000
+    }
+}

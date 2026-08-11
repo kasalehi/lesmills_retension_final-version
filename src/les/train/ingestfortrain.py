@@ -35,7 +35,6 @@ def ingest_data_enhanced(snap: pd.DataFrame):
         query = f"""
 DECLARE @TestDate DATE;
 SET @TestDate = '{start_date}';
-
 WITH base_memberships AS (
     SELECT
         cm.MembershipID,
@@ -44,7 +43,6 @@ WITH base_memberships AS (
         cm.[End Date],
         cm.[Status Desc],
         cm.SubCategory,
-        cm.Category,
         cm.Channel,
         cm.ClubName,
         cm.MembershipTypeDesc,
@@ -52,12 +50,10 @@ WITH base_memberships AS (
         cm.Gender,
         cm.DOB,
         cm.Discount,
-        cm.Amount,
         cm.[Base Amount],
         cm.PaymentFrequency,
         cm.[Term],
         cm.TermDays,
-        cm.BillingDay,
         cm.[Lump Sum Flag],
         cm.[Original Start Date],
         cm.DateLastAccessed,
@@ -115,17 +111,31 @@ final_dataset AS (
         bm.Gender,
         tf.Age,
         bm.SubCategory,
-        bm.Category,
         bm.Channel,
         bm.ClubName,
         bm.MembershipTypeDesc,
-        bm.RegularPayment,
-        bm.Amount,
-        bm.[Base Amount],
-        bm.PaymentFrequency,
-        bm.[Term],
+		 case
+			when  bm.RegularPayment<=20 then '<20'
+			when  bm.RegularPayment <= 25 then '<25'
+			when  bm.RegularPayment<=30 then '<30'
+			when  bm.RegularPayment<=35 then '<35'
+			when bm.RegularPayment<=40 then '<40'
+			when bm.RegularPayment<=45 then '<45'
+		else '45+'
+		end as [RegularPayment],
+       case
+			when  bm.PaymentFrequency like 'Fort%' then 'Fortnightly'
+			when  bm.PaymentFrequency like 'Mon%' then 'Monthly'
+			when  bm.PaymentFrequency like 'Wee%' then 'Weekly'
+		else 'UnDefined'
+		end as [Base Amount],
+		case 
+		when bm.[Term] like '12%' then '12Months'
+		when bm.[Term] like '6%' then '6Months'
+		when bm.[Term] like '24%' then '24Months'
+		else 'UnDefined'
+		end as [Term],
         bm.TermDays,
-        bm.BillingDay,
         bm.[Lump Sum Flag],
         CASE
             WHEN bm.DateLastAccessed IS NULL THEN 999999
@@ -151,6 +161,7 @@ SELECT * FROM final_dataset
 WHERE TotalAttendanceToDate > 0  
 ORDER BY MembershipID;
         """
+
 
         logger.info("Executing enhanced ingest query...")
         df = hook.get_pandas_df(sql=query)
