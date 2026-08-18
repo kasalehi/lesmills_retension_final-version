@@ -528,6 +528,10 @@ def insert_predictions_to_sql(engineered_data: dict = None, run_date=None):
         # ===================================
         print("\n🔧 Converting NA/NaN to SQL NULL...")
 
+        # ✅ SAVE RunDate BEFORE conversion (to prevent it from being set to NULL)
+        run_date_values = sql_insert_df['RunDate'].copy()
+        print(f"✅ Saved RunDate: {run_date_values.iloc[0] if len(run_date_values) > 0 else 'empty'}")
+
         # Replace all pd.NA and NaN with None for SQL compatibility
         sql_insert_df = sql_insert_df.where(pd.notna(sql_insert_df), None)
 
@@ -537,7 +541,10 @@ def insert_predictions_to_sql(engineered_data: dict = None, run_date=None):
                 lambda x: None if pd.isna(x) else x
             )
 
-        print("✅ NA/NaN converted to NULL")
+        # ✅ RESTORE RunDate with original values (prevent NULL override)
+        sql_insert_df['RunDate'] = run_date_values
+        print(f"✅ Restored RunDate: {sql_insert_df['RunDate'].iloc[0] if len(sql_insert_df) > 0 else 'empty'}")
+        print("✅ NA/NaN converted to NULL (RunDate preserved)")
 
         # ===================================
         # INSERT INTO SQL (Using SQLAlchemy for better SQL Server support)
