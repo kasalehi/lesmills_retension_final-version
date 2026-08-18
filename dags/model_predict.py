@@ -313,351 +313,6 @@ def save_predictions(predictions_and_data: dict = None):
 
 
 # ================================
-# INSERT PREDICTIONS INTO SQL
-# ================================
-def insert_predictions_to_sql(engineered_data: dict = None, run_date=None):
-    """
-    Insert predictions and engineered features into SQL table.
-
-    Table: [Your_Database].[dbo].[tbl_churn_predictions]
-
-    Input:
-      - engineered_data: dict with 'merged_df' that includes predictions + engineered features
-      - run_date: date from Airflow predict_date variable (passed from insert_sql_task)
-
-    Columns:
-      - RunDate (date): from predict_date variable
-      - MembershipID (uniqueidentifier): from data
-      - Prediction (int): from model prediction (0, 1, 2)
-      - PredictionConfidence (float): model confidence
-      - EndDate (date): NULL (always)
-      - All real + engineered features: from merged data (NULL if missing/type mismatch)
-    """
-    try:
-        print("🔗 Connecting to SQL Database...")
-        hook = MsSqlHook(mssql_conn_id="mssql")
-
-        # ✅ Use run_date passed from insert_sql_task
-        if run_date is None:
-            # Fallback if not passed
-            predict_date = Variable.get("predict_date", default_var="2024-01-01")
-            run_date = pd.to_datetime(predict_date).date()
-            print(f"⚠️  RunDate not passed, using fallback from Variable")
-
-        print(f"📊 Using RunDate for SQL insert: {run_date}")
-
-        # Load merged + engineered data
-        print("📊 Loading merged and engineered data...")
-
-        # ✅ Use engineered_data from engineer_features_task
-        if engineered_data is None or "merged_df" not in engineered_data:
-            raise FileNotFoundError("No engineered data passed from feature engineering task")
-
-        features_df = engineered_data["merged_df"]
-        pred_class = engineered_data.get("pred_class_col", "PredictedClass")
-        pred_confidence_col = engineered_data.get("pred_confidence_col", "Confidence")
-
-        print(f"✅ Loaded merged + engineered data: {len(features_df)} rows")
-        print(f"   Has predictions: {'PredictedClass' in features_df.columns}")
-        print(f"   Has confidence: {'Confidence' in features_df.columns}")
-        print(f"   Engineered features: {len([c for c in features_df.columns if c in ['Engagement_Rate', 'Recent_Activity_Ratio', 'Declining_Engagement', 'Monthly_Avg_Visits', 'Payment_to_Attendance_Ratio', 'Recent_Payment_to_Visits', 'Tenure_Quartile', 'Early_Churn_Risk', 'Inactivity_Ratio', 'Attendance_Dropoff', 'Access_Gap_Months', 'High_Inactivity']])}/12")
-
-        # ===================================
-        # MAP COLUMNS TO SQL TABLE
-        # ===================================
-        print("\n📋 Mapping columns to SQL schema...")
-
-        # Column mapping: DataFrame → SQL Table
-        # If column doesn't exist in features, it will be NULL
-        sql_insert_df = pd.DataFrame()
-
-        # ✅ Direct mappings - RunDate from predict_date variable
-        sql_insert_df['RunDate'] = run_date
-        print(f"✅ RunDate set to: {run_date} (from predict_date variable)")
-
-        # MembershipID (uniqueidentifier)
-        if 'MembershipID' in features_df.columns:
-            sql_insert_df['MembershipID'] = features_df['MembershipID'].astype(str)
-        else:
-            sql_insert_df['MembershipID'] = None
-            print("⚠️  MembershipID not found in features")
-
-        # MemberId (nvarchar)
-        if 'member_id' in features_df.columns:
-            sql_insert_df['MemberId'] = features_df['member_id'].astype(str)
-        else:
-            sql_insert_df['MemberId'] = None
-
-        # Gender
-        sql_insert_df['Gender'] = features_df.get('Gender', None)
-
-        # Age (int)
-        if 'Age' in features_df.columns:
-            sql_insert_df['Age'] = pd.to_numeric(features_df['Age'], errors='coerce').astype('Int64')
-        else:
-            sql_insert_df['Age'] = None
-
-        # SubCategory
-        sql_insert_df['SubCategory'] = features_df.get('SubCategory', None)
-
-        # Channel
-        sql_insert_df['Channel'] = features_df.get('Channel', None)
-
-        # ClubName
-        sql_insert_df['ClubName'] = features_df.get('ClubName', None)
-
-        # MembershipTypeDesc
-        sql_insert_df['MembershipTypeDesc'] = features_df.get('MembershipTypeDesc', None)
-
-        # Term
-        sql_insert_df['Term'] = features_df.get('Term', None)
-
-        # TermDays (int)
-        if 'TermDays' in features_df.columns:
-            sql_insert_df['TermDays'] = pd.to_numeric(features_df['TermDays'], errors='coerce').astype('Int64')
-        else:
-            sql_insert_df['TermDays'] = None
-
-        # Lump Sum Flag (bit/int)
-        if 'Lump Sum Flag' in features_df.columns:
-            sql_insert_df['Lump Sum Flag'] = pd.to_numeric(features_df['Lump Sum Flag'], errors='coerce').astype('Int64')
-        else:
-            sql_insert_df['Lump Sum Flag'] = None
-
-        # RegularPayment (float)
-        if 'RegularPayment' in features_df.columns:
-            sql_insert_df['RegularPayment'] = pd.to_numeric(features_df['RegularPayment'], errors='coerce').astype('float64')
-        else:
-            sql_insert_df['RegularPayment'] = None
-
-        # Base Amount (float)
-        if 'Base Amount' in features_df.columns:
-            sql_insert_df['Base Amount'] = pd.to_numeric(features_df['Base Amount'], errors='coerce').astype('float64')
-        else:
-            sql_insert_df['Base Amount'] = None
-
-        # TenureDays (int)
-        if 'TenureDays' in features_df.columns:
-            sql_insert_df['TenureDays'] = pd.to_numeric(features_df['TenureDays'], errors='coerce').astype('Int64')
-        else:
-            sql_insert_df['TenureDays'] = None
-
-        # DaysSinceOriginalStart (int)
-        if 'DaysSinceOriginalStart' in features_df.columns:
-            sql_insert_df['DaysSinceOriginalStart'] = pd.to_numeric(features_df['DaysSinceOriginalStart'], errors='coerce').astype('Int64')
-        else:
-            sql_insert_df['DaysSinceOriginalStart'] = None
-
-        # DaysSinceLastAccessed (int)
-        if 'DaysSinceLastAccessed' in features_df.columns:
-            sql_insert_df['DaysSinceLastAccessed'] = pd.to_numeric(features_df['DaysSinceLastAccessed'], errors='coerce').astype('Int64')
-        else:
-            sql_insert_df['DaysSinceLastAccessed'] = None
-
-        # TotalAttendanceToDate (int)
-        if 'TotalAttendanceToDate' in features_df.columns:
-            sql_insert_df['TotalAttendanceToDate'] = pd.to_numeric(features_df['TotalAttendanceToDate'], errors='coerce').astype('Int64')
-        else:
-            sql_insert_df['TotalAttendanceToDate'] = None
-
-        # Visits_Last90d (int)
-        if 'Visits_Last90d' in features_df.columns:
-            sql_insert_df['Visits_Last90d'] = pd.to_numeric(features_df['Visits_Last90d'], errors='coerce').astype('Int64')
-        else:
-            sql_insert_df['Visits_Last90d'] = None
-
-        # Visits_Last30d (int)
-        if 'Visits_Last30d' in features_df.columns:
-            sql_insert_df['Visits_Last30d'] = pd.to_numeric(features_df['Visits_Last30d'], errors='coerce').astype('Int64')
-        else:
-            sql_insert_df['Visits_Last30d'] = None
-
-        # EndedWithinCoolingPeriod (int)
-        if 'EndedWithinCoolingPeriod' in features_df.columns:
-            sql_insert_df['EndedWithinCoolingPeriod'] = pd.to_numeric(features_df['EndedWithinCoolingPeriod'], errors='coerce').astype('Int64')
-        else:
-            sql_insert_df['EndedWithinCoolingPeriod'] = None
-
-        # EWS_Pct (float) - from ews_pct
-        if 'ews_pct' in features_df.columns:
-            sql_insert_df['EWS_Pct'] = pd.to_numeric(features_df['ews_pct'], errors='coerce').astype('float64')
-        else:
-            sql_insert_df['EWS_Pct'] = None
-
-        # Risk_Band (nvarchar) - from risk_band
-        if 'risk_band' in features_df.columns:
-            sql_insert_df['Risk_Band'] = features_df['risk_band'].astype(str)
-        else:
-            sql_insert_df['Risk_Band'] = None
-
-        # Engineered features (if available, else NULL)
-        engineered_features = [
-            'Engagement_Rate', 'Recent_Activity_Ratio', 'Declining_Engagement',
-            'Monthly_Avg_Visits', 'Payment_to_Attendance_Ratio', 'Recent_Payment_to_Visits',
-            'Tenure_Quartile', 'Early_Churn_Risk', 'Inactivity_Ratio',
-            'Attendance_Dropoff', 'Access_Gap_Months', 'High_Inactivity'
-        ]
-
-        for feature in engineered_features:
-            if feature in features_df.columns:
-                sql_insert_df[feature] = pd.to_numeric(features_df[feature], errors='coerce')
-            else:
-                sql_insert_df[feature] = None
-
-        # Model predictions (from merged data)
-        if 'PredictedClass' in features_df.columns:
-            sql_insert_df['Prediction'] = pd.to_numeric(features_df['PredictedClass'], errors='coerce').astype('int64')
-        else:
-            sql_insert_df['Prediction'] = None
-            print("⚠️  PredictedClass not found in merged data")
-
-        if 'Confidence' in features_df.columns:
-            sql_insert_df['PredictionConfidence'] = pd.to_numeric(features_df['Confidence'], errors='coerce').astype('float64')
-        else:
-            sql_insert_df['PredictionConfidence'] = None
-            print("⚠️  Confidence not found in merged data")
-
-        # EndDate (always NULL per requirement)
-        sql_insert_df['EndDate'] = None
-
-        print(f"✅ Mapped {len(sql_insert_df.columns)} columns")
-        print(f"✅ Prepared {len(sql_insert_df)} rows for insert")
-
-        # ===================================
-        # CONVERT NA/NaN TO NONE (SQL NULL)
-        # ===================================
-        print("\n🔧 Converting NA/NaN to SQL NULL...")
-
-        # ✅ SAVE RunDate BEFORE conversion (to prevent it from being set to NULL)
-        run_date_values = sql_insert_df['RunDate'].copy()
-        print(f"✅ Saved RunDate: {run_date_values.iloc[0] if len(run_date_values) > 0 else 'empty'}")
-
-        # Replace all pd.NA and NaN with None for SQL compatibility
-        sql_insert_df = sql_insert_df.where(pd.notna(sql_insert_df), None)
-
-        # Also handle pd.NA explicitly
-        for col in sql_insert_df.columns:
-            sql_insert_df[col] = sql_insert_df[col].apply(
-                lambda x: None if pd.isna(x) else x
-            )
-
-        # ✅ RESTORE RunDate with original values (prevent NULL override)
-        sql_insert_df['RunDate'] = run_date_values
-        print(f"✅ Restored RunDate: {sql_insert_df['RunDate'].iloc[0] if len(sql_insert_df) > 0 else 'empty'}")
-        print("✅ NA/NaN converted to NULL (RunDate preserved)")
-
-        # ===================================
-        # INSERT INTO SQL (Using SQLAlchemy for better SQL Server support)
-        # ===================================
-        print("\n📤 Inserting into SQL table...")
-        print(f"📊 Total records to insert: {len(sql_insert_df)}")
-
-        try:
-            from sqlalchemy import create_engine, text
-
-            # Get connection string from MsSql hook
-            conn = hook.get_conn()
-            conn_str = hook.get_uri()
-
-            # Create SQLAlchemy engine
-            engine = create_engine(conn_str)
-
-            table_name = "repo.MembershipRetentionPredictions"
-
-            # ✅ NEW: Batch insert with progress logging
-            batch_size = 100
-            total_rows = len(sql_insert_df)
-            inserted_count = 0
-
-            for i in range(0, total_rows, batch_size):
-                batch_df = sql_insert_df.iloc[i : i + batch_size]
-
-                try:
-                    batch_df.to_sql(
-                        table_name.split('.')[-1],  # table name
-                        engine,
-                        schema=table_name.split('.')[0] if '.' in table_name else 'dbo',  # schema
-                        if_exists='append',
-                        index=False,
-                        method='multi'
-                    )
-
-                    inserted_count += len(batch_df)
-                    progress_pct = (inserted_count / total_rows) * 100
-
-                    # ✅ Log every 100 rows
-                    print(f"✅ Inserted {inserted_count}/{total_rows} rows ({progress_pct:.1f}%)")
-
-                except Exception as e:
-                    print(f"❌ Batch {i}-{i+batch_size} failed: {e}")
-                    raise
-
-            conn.close()
-            engine.dispose()
-
-            print(f"\n✅ Successfully inserted {inserted_count}/{total_rows} records (100.0%)")
-
-        except Exception as e:
-            print(f"❌ SQLAlchemy insert failed: {e}")
-            print("⚠️  Falling back to row-by-row insert...")
-
-            # Fallback: row-by-row insert with SQL Server syntax + progress logging
-            conn = hook.get_conn()
-            cursor = conn.cursor()
-
-            table_name = "repo.MembershipRetentionPredictions"
-            columns = ', '.join([f"[{col}]" for col in sql_insert_df.columns])
-            placeholders = ', '.join(['?' for _ in sql_insert_df.columns])
-
-            sql_insert = f"INSERT INTO [{table_name}] ({columns}) VALUES ({placeholders})"
-
-            inserted_count = 0
-            total_rows = len(sql_insert_df)
-
-            for idx, row in sql_insert_df.iterrows():
-                try:
-                    cursor.execute(sql_insert, tuple(row.tolist()))
-                    inserted_count += 1
-
-                    # ✅ Log every 100 rows
-                    if (inserted_count % 100) == 0 or inserted_count == total_rows:
-                        progress_pct = (inserted_count / total_rows) * 100
-                        print(f"✅ Inserted {inserted_count}/{total_rows} rows ({progress_pct:.1f}%)")
-
-                except Exception as e:
-                    print(f"⚠️  Row {idx} insert failed: {e}")
-                    continue
-
-            conn.commit()
-            cursor.close()
-            conn.close()
-
-            print(f"\n✅ Successfully inserted {inserted_count}/{total_rows} records")
-
-        # ===================================
-        # SUMMARY STATS
-        # ===================================
-        print("\n📊 Insert Summary:")
-        print(f"   Total records: {len(sql_insert_df)}")
-        print(f"   Inserted: {inserted_count}")
-        print(f"   Failed: {len(sql_insert_df) - inserted_count}")
-        print(f"   Table: {table_name}")
-        print(f"   Columns: {len(sql_insert_df.columns)}")
-
-        return {
-            "status": "success",
-            "records_inserted": inserted_count,
-            "total_records": len(sql_insert_df),
-            "table": table_name,
-            "timestamp": datetime.now().isoformat()
-        }
-
-    except Exception as e:
-        print(f"❌ SQL insert failed: {str(e)}")
-        raise Exception(f"Insert to SQL failed: {e}")
-
-
-# ================================
 # DAG
 # ================================
 with DAG(
@@ -741,16 +396,286 @@ with DAG(
 
     @task
     def insert_sql_task(engineered_data=None):
-        # ✅ Get predict_date from Airflow Variable (from UI)
-        predict_date = Variable.get("predict_date", default_var="2024-01-01")
-        run_date = pd.to_datetime(predict_date).date()
+        """
+        Insert predictions and engineered features directly into SQL table.
+        All logic defined inside this task function.
+        """
+        try:
+            # ✅ Get predict_date from Airflow Variable (from UI)
+            predict_date = Variable.get("predict_date", default_var="2024-01-01")
+            run_date = pd.to_datetime(predict_date).date()
 
-        print(f"\n📅 INSERT_SQL_TASK:")
-        print(f"   Predict Date (from Airflow Variable): {predict_date}")
-        print(f"   Run Date (for SQL): {run_date}")
+            print(f"\n📅 INSERT_SQL_TASK:")
+            print(f"   Predict Date (from Airflow Variable): {predict_date}")
+            print(f"   Run Date (for SQL): {run_date}")
 
-        # ✅ Pass run_date to insert function
-        return insert_predictions_to_sql(engineered_data, run_date)
+            # ===================================
+            # LOAD DATA
+            # ===================================
+            print("🔗 Connecting to SQL Database...")
+            hook = MsSqlHook(mssql_conn_id="mssql")
+
+            print("📊 Loading merged and engineered data...")
+
+            if engineered_data is None or "merged_df" not in engineered_data:
+                raise FileNotFoundError("No engineered data passed from feature engineering task")
+
+            features_df = engineered_data["merged_df"]
+
+            print(f"✅ Loaded merged + engineered data: {len(features_df)} rows")
+            print(f"   Has predictions: {'PredictedClass' in features_df.columns}")
+            print(f"   Has confidence: {'Confidence' in features_df.columns}")
+
+            # ===================================
+            # MAP COLUMNS TO SQL TABLE
+            # ===================================
+            print("\n📋 Mapping columns to SQL schema...")
+
+            sql_insert_df = pd.DataFrame()
+
+            # ✅ Direct mappings - RunDate from predict_date variable
+            sql_insert_df['RunDate'] = run_date
+            print(f"✅ RunDate set to: {run_date} (from predict_date variable)")
+
+            # MembershipID (uniqueidentifier)
+            if 'MembershipID' in features_df.columns:
+                sql_insert_df['MembershipID'] = features_df['MembershipID'].astype(str)
+            else:
+                sql_insert_df['MembershipID'] = None
+
+            # MemberId (nvarchar)
+            if 'member_id' in features_df.columns:
+                sql_insert_df['MemberId'] = features_df['member_id'].astype(str)
+            else:
+                sql_insert_df['MemberId'] = None
+
+            # Gender
+            sql_insert_df['Gender'] = features_df.get('Gender', None)
+
+            # Age (int)
+            if 'Age' in features_df.columns:
+                sql_insert_df['Age'] = pd.to_numeric(features_df['Age'], errors='coerce').astype('Int64')
+            else:
+                sql_insert_df['Age'] = None
+
+            # SubCategory
+            sql_insert_df['SubCategory'] = features_df.get('SubCategory', None)
+
+            # Channel
+            sql_insert_df['Channel'] = features_df.get('Channel', None)
+
+            # ClubName
+            sql_insert_df['ClubName'] = features_df.get('ClubName', None)
+
+            # MembershipTypeDesc
+            sql_insert_df['MembershipTypeDesc'] = features_df.get('MembershipTypeDesc', None)
+
+            # Term
+            sql_insert_df['Term'] = features_df.get('Term', None)
+
+            # TermDays (int)
+            if 'TermDays' in features_df.columns:
+                sql_insert_df['TermDays'] = pd.to_numeric(features_df['TermDays'], errors='coerce').astype('Int64')
+            else:
+                sql_insert_df['TermDays'] = None
+
+            # Lump Sum Flag (bit/int)
+            if 'Lump Sum Flag' in features_df.columns:
+                sql_insert_df['Lump Sum Flag'] = pd.to_numeric(features_df['Lump Sum Flag'], errors='coerce').astype('Int64')
+            else:
+                sql_insert_df['Lump Sum Flag'] = None
+
+            # RegularPayment (float)
+            if 'RegularPayment' in features_df.columns:
+                sql_insert_df['RegularPayment'] = pd.to_numeric(features_df['RegularPayment'], errors='coerce').astype('float64')
+            else:
+                sql_insert_df['RegularPayment'] = None
+
+            # Base Amount (float)
+            if 'Base Amount' in features_df.columns:
+                sql_insert_df['Base Amount'] = pd.to_numeric(features_df['Base Amount'], errors='coerce').astype('float64')
+            else:
+                sql_insert_df['Base Amount'] = None
+
+            # TenureDays (int)
+            if 'TenureDays' in features_df.columns:
+                sql_insert_df['TenureDays'] = pd.to_numeric(features_df['TenureDays'], errors='coerce').astype('Int64')
+            else:
+                sql_insert_df['TenureDays'] = None
+
+            # DaysSinceOriginalStart (int)
+            if 'DaysSinceOriginalStart' in features_df.columns:
+                sql_insert_df['DaysSinceOriginalStart'] = pd.to_numeric(features_df['DaysSinceOriginalStart'], errors='coerce').astype('Int64')
+            else:
+                sql_insert_df['DaysSinceOriginalStart'] = None
+
+            # DaysSinceLastAccessed (int)
+            if 'DaysSinceLastAccessed' in features_df.columns:
+                sql_insert_df['DaysSinceLastAccessed'] = pd.to_numeric(features_df['DaysSinceLastAccessed'], errors='coerce').astype('Int64')
+            else:
+                sql_insert_df['DaysSinceLastAccessed'] = None
+
+            # TotalAttendanceToDate (int)
+            if 'TotalAttendanceToDate' in features_df.columns:
+                sql_insert_df['TotalAttendanceToDate'] = pd.to_numeric(features_df['TotalAttendanceToDate'], errors='coerce').astype('Int64')
+            else:
+                sql_insert_df['TotalAttendanceToDate'] = None
+
+            # Visits_Last90d (int)
+            if 'Visits_Last90d' in features_df.columns:
+                sql_insert_df['Visits_Last90d'] = pd.to_numeric(features_df['Visits_Last90d'], errors='coerce').astype('Int64')
+            else:
+                sql_insert_df['Visits_Last90d'] = None
+
+            # Visits_Last30d (int)
+            if 'Visits_Last30d' in features_df.columns:
+                sql_insert_df['Visits_Last30d'] = pd.to_numeric(features_df['Visits_Last30d'], errors='coerce').astype('Int64')
+            else:
+                sql_insert_df['Visits_Last30d'] = None
+
+            # EndedWithinCoolingPeriod (int)
+            if 'EndedWithinCoolingPeriod' in features_df.columns:
+                sql_insert_df['EndedWithinCoolingPeriod'] = pd.to_numeric(features_df['EndedWithinCoolingPeriod'], errors='coerce').astype('Int64')
+            else:
+                sql_insert_df['EndedWithinCoolingPeriod'] = None
+
+            # EWS_Pct (float) - from ews_pct
+            if 'ews_pct' in features_df.columns:
+                sql_insert_df['EWS_Pct'] = pd.to_numeric(features_df['ews_pct'], errors='coerce').astype('float64')
+            else:
+                sql_insert_df['EWS_Pct'] = None
+
+            # Risk_Band (nvarchar) - from risk_band
+            if 'risk_band' in features_df.columns:
+                sql_insert_df['Risk_Band'] = features_df['risk_band'].astype(str)
+            else:
+                sql_insert_df['Risk_Band'] = None
+
+            # Engineered features (if available, else NULL)
+            engineered_features = [
+                'Engagement_Rate', 'Recent_Activity_Ratio', 'Declining_Engagement',
+                'Monthly_Avg_Visits', 'Payment_to_Attendance_Ratio', 'Recent_Payment_to_Visits',
+                'Tenure_Quartile', 'Early_Churn_Risk', 'Inactivity_Ratio',
+                'Attendance_Dropoff', 'Access_Gap_Months', 'High_Inactivity'
+            ]
+
+            for feature in engineered_features:
+                if feature in features_df.columns:
+                    sql_insert_df[feature] = pd.to_numeric(features_df[feature], errors='coerce')
+                else:
+                    sql_insert_df[feature] = None
+
+            # Model predictions (from merged data)
+            if 'PredictedClass' in features_df.columns:
+                sql_insert_df['Prediction'] = pd.to_numeric(features_df['PredictedClass'], errors='coerce').astype('int64')
+            else:
+                sql_insert_df['Prediction'] = None
+
+            if 'Confidence' in features_df.columns:
+                sql_insert_df['PredictionConfidence'] = pd.to_numeric(features_df['Confidence'], errors='coerce').astype('float64')
+            else:
+                sql_insert_df['PredictionConfidence'] = None
+
+            # EndDate (always NULL per requirement)
+            sql_insert_df['EndDate'] = None
+
+            print(f"✅ Mapped {len(sql_insert_df.columns)} columns")
+            print(f"✅ Prepared {len(sql_insert_df)} rows for insert")
+
+            # ===================================
+            # CONVERT NA/NaN TO NONE (SQL NULL)
+            # ===================================
+            print("\n🔧 Converting NA/NaN to SQL NULL...")
+
+            # ✅ SAVE RunDate BEFORE conversion (to prevent it from being set to NULL)
+            run_date_values = sql_insert_df['RunDate'].copy()
+            print(f"✅ Saved RunDate: {run_date_values.iloc[0] if len(run_date_values) > 0 else 'empty'}")
+
+            # Replace all pd.NA and NaN with None for SQL compatibility
+            sql_insert_df = sql_insert_df.where(pd.notna(sql_insert_df), None)
+
+            # Also handle pd.NA explicitly
+            for col in sql_insert_df.columns:
+                sql_insert_df[col] = sql_insert_df[col].apply(
+                    lambda x: None if pd.isna(x) else x
+                )
+
+            # ✅ RESTORE RunDate with original values (prevent NULL override)
+            sql_insert_df['RunDate'] = run_date_values
+            print(f"✅ Restored RunDate: {sql_insert_df['RunDate'].iloc[0] if len(sql_insert_df) > 0 else 'empty'}")
+            print("✅ NA/NaN converted to NULL (RunDate preserved)")
+
+            # ===================================
+            # INSERT INTO SQL (Using SQLAlchemy for better SQL Server support)
+            # ===================================
+            print("\n📤 Inserting into SQL table...")
+            print(f"📊 Total records to insert: {len(sql_insert_df)}")
+
+            from sqlalchemy import create_engine, text
+
+            # Get connection string from MsSql hook
+            conn = hook.get_conn()
+            conn_str = hook.get_uri()
+
+            # Create SQLAlchemy engine
+            engine = create_engine(conn_str)
+
+            table_name = "repo.MembershipRetentionPredictions"
+
+            # ✅ Batch insert with progress logging
+            batch_size = 100
+            total_rows = len(sql_insert_df)
+            inserted_count = 0
+
+            for i in range(0, total_rows, batch_size):
+                batch_df = sql_insert_df.iloc[i : i + batch_size]
+
+                try:
+                    batch_df.to_sql(
+                        table_name.split('.')[-1],  # table name
+                        engine,
+                        schema=table_name.split('.')[0] if '.' in table_name else 'dbo',  # schema
+                        if_exists='append',
+                        index=False,
+                        method='multi'
+                    )
+
+                    inserted_count += len(batch_df)
+                    progress_pct = (inserted_count / total_rows) * 100
+
+                    # ✅ Log every 100 rows
+                    print(f"✅ Inserted {inserted_count}/{total_rows} rows ({progress_pct:.1f}%)")
+
+                except Exception as e:
+                    print(f"❌ Batch {i}-{i+batch_size} failed: {e}")
+                    raise
+
+            conn.close()
+            engine.dispose()
+
+            print(f"\n✅ Successfully inserted {inserted_count}/{total_rows} records (100.0%)")
+
+            # ===================================
+            # SUMMARY STATS
+            # ===================================
+            print("\n📊 Insert Summary:")
+            print(f"   Total records: {len(sql_insert_df)}")
+            print(f"   Inserted: {inserted_count}")
+            print(f"   Failed: {len(sql_insert_df) - inserted_count}")
+            print(f"   Table: {table_name}")
+            print(f"   Columns: {len(sql_insert_df.columns)}")
+
+            return {
+                "status": "success",
+                "records_inserted": inserted_count,
+                "total_records": len(sql_insert_df),
+                "table": table_name,
+                "timestamp": datetime.now().isoformat()
+            }
+
+        except Exception as e:
+            print(f"❌ SQL insert failed: {str(e)}")
+            raise Exception(f"Insert to SQL failed: {e}")
 
     # Flow
     # read_data → snapshots → ingest → model_predict → JOIN → engineer_features → insert_sql
