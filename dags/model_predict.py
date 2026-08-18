@@ -158,6 +158,56 @@ def apply_model(data_paths: dict):
 
 
 # ================================
+# JOIN PREDICTIONS WITH FEATURES
+# ================================
+def merge_predictions_with_features(predictions_data: dict):
+    """
+    Join predictions (MembershipID, Prediction, Confidence) with raw features.
+
+    Input:
+      - predictions_data: dict with 'predictions_df' and 'features_path'
+
+    Returns:
+      - merged_df: raw features + prediction columns
+    """
+    try:
+        print("🔗 Merging predictions with raw features...")
+
+        # Load predictions
+        predictions_df = predictions_data["predictions_df"]
+        print(f"✅ Predictions loaded: {len(predictions_df)} rows")
+        print(f"   Columns: {list(predictions_df.columns)}")
+
+        # Load raw features
+        features_path = predictions_data["features_path"]
+        features_df = pd.read_parquet(features_path)
+        print(f"✅ Features loaded: {len(features_df)} rows")
+        print(f"   Columns: {list(features_df.columns)[:10]}... (showing first 10)")
+
+        # JOIN on MembershipID
+        merged_df = features_df.merge(
+            predictions_df[['MembershipID', 'PredictedClass', 'Confidence', 'ClassLabel']],
+            on='MembershipID',
+            how='left'
+        )
+
+        print(f"✅ Merge complete:")
+        print(f"   Result rows: {len(merged_df)}")
+        print(f"   Result cols: {len(merged_df.columns)}")
+        print(f"   Rows with predictions: {merged_df['PredictedClass'].notna().sum()}")
+        print(f"   Rows missing predictions: {merged_df['PredictedClass'].isna().sum()}")
+
+        return {
+            "merged_df": merged_df,
+            "merge_count": len(merged_df),
+            "predictions_matched": merged_df['PredictedClass'].notna().sum()
+        }
+
+    except Exception as e:
+        raise Exception(f"Merge predictions with features failed: {e}")
+
+
+# ================================
 # SAVE PREDICTIONS WITH ALL FEATURES
 # ================================
 def save_predictions(predictions_and_data: dict = None):
@@ -265,11 +315,14 @@ def save_predictions(predictions_and_data: dict = None):
 # ================================
 # INSERT PREDICTIONS INTO SQL
 # ================================
-def insert_predictions_to_sql(predictions_and_data: dict = None):
+def insert_predictions_to_sql(engineered_data: dict = None):
     """
-    Insert predictions and features into SQL table.
+    Insert predictions and engineered features into SQL table.
 
     Table: [Your_Database].[dbo].[tbl_churn_predictions]
+
+    Input:
+      - engineered_data: dict with 'merged_df' that includes predictions + engineered features
 
     Columns:
       - RunDate (date): from predict_date
@@ -277,7 +330,7 @@ def insert_predictions_to_sql(predictions_and_data: dict = None):
       - Prediction (int): from model prediction (0, 1, 2)
       - PredictionConfidence (float): model confidence
       - EndDate (date): NULL (always)
-      - All other columns: from features (NULL if missing/type mismatch)
+      - All real + engineered features: from merged data (NULL if missing/type mismatch)
     """
     try:
         print("🔗 Connecting to SQL Database...")
@@ -289,45 +342,21 @@ def insert_predictions_to_sql(predictions_and_data: dict = None):
 
         print(f"📅 Run Date: {run_date}")
 
-        # Load features and predictions
-        print("📊 Loading features and predictions...")
+        # Load merged + engineered data
+        print("📊 Loading merged and engineered data...")
 
-        # ✅ Use predictions_data from model_task
-        if predictions_and_data is None or "predictions_df" not in predictions_and_data:
-            # Fallback: load from files if no data passed
-            print("⚠️  No predictions passed from model_task, trying to load from files...")
-            latest_parquet = max(
-                DATA_DIR.glob("df_merged_*.parquet"),
-                default=None,
-                key=lambda p: p.stat().st_mtime
-            )
-            if not latest_parquet:
-                raise FileNotFoundError("No feature data found")
-            features_df = pd.read_parquet(latest_parquet)
+        # ✅ Use engineered_data from engineer_features_task
+        if engineered_data is None or "merged_df" not in engineered_data:
+            raise FileNotFoundError("No engineered data passed from feature engineering task")
 
-            latest_pred_csv = max(
-                ARTIFACT_DIR.glob("predictions_*.csv"),
-                default=None,
-                key=lambda p: p.stat().st_mtime
-            )
-            if not latest_pred_csv:
-                raise FileNotFoundError("No predictions found")
-            pred_df = pd.read_csv(latest_pred_csv)
-        else:
-            # ✅ Use data from model_task (preferred)
-            pred_df = predictions_and_data["predictions_df"]
-            features_path = predictions_and_data["features_path"]
-            features_df = pd.read_parquet(features_path)
+        features_df = engineered_data["merged_df"]
+        pred_class = engineered_data.get("pred_class_col", "PredictedClass")
+        pred_confidence_col = engineered_data.get("pred_confidence_col", "Confidence")
 
-        print(f"✅ Loaded features: {len(features_df)} rows")
-        print(f"✅ Loaded predictions: {len(pred_df)} rows")
-
-        # ===================================
-        # ENGINEER FEATURES
-        # ===================================
-        print("\n🔧 Engineering SQL features...")
-        features_df = engineer_sql_features(features_df)
-        print(f"✅ Features engineered: 12 new features added")
+        print(f"✅ Loaded merged + engineered data: {len(features_df)} rows")
+        print(f"   Has predictions: {'PredictedClass' in features_df.columns}")
+        print(f"   Has confidence: {'Confidence' in features_df.columns}")
+        print(f"   Engineered features: {len([c for c in features_df.columns if c in ['Engagement_Rate', 'Recent_Activity_Ratio', 'Declining_Engagement', 'Monthly_Avg_Visits', 'Payment_to_Attendance_Ratio', 'Recent_Payment_to_Visits', 'Tenure_Quartile', 'Early_Churn_Risk', 'Inactivity_Ratio', 'Attendance_Dropoff', 'Access_Gap_Months', 'High_Inactivity']])}/12")
 
         # ===================================
         # MAP COLUMNS TO SQL TABLE
@@ -470,9 +499,18 @@ def insert_predictions_to_sql(predictions_and_data: dict = None):
             else:
                 sql_insert_df[feature] = None
 
-        # Model predictions
-        sql_insert_df['Prediction'] = pred_df['PredictedClass'].astype('int64')
-        sql_insert_df['PredictionConfidence'] = pred_df['Confidence'].astype('float64')
+        # Model predictions (from merged data)
+        if 'PredictedClass' in features_df.columns:
+            sql_insert_df['Prediction'] = pd.to_numeric(features_df['PredictedClass'], errors='coerce').astype('int64')
+        else:
+            sql_insert_df['Prediction'] = None
+            print("⚠️  PredictedClass not found in merged data")
+
+        if 'Confidence' in features_df.columns:
+            sql_insert_df['PredictionConfidence'] = pd.to_numeric(features_df['Confidence'], errors='coerce').astype('float64')
+        else:
+            sql_insert_df['PredictionConfidence'] = None
+            print("⚠️  Confidence not found in merged data")
 
         # EndDate (always NULL per requirement)
         sql_insert_df['EndDate'] = None
@@ -639,14 +677,42 @@ with DAG(
         }
 
     @task
-    def insert_sql_task(predictions_data=None):
-        # ✅ NEW: Insert predictions into SQL table
-        # Combines features + predictions and inserts
-        return insert_predictions_to_sql(predictions_data)
+    def merge_predictions_task(model_output):
+        # ✅ NEW: Join predictions with raw features
+        return merge_predictions_with_features(model_output)
+
+    @task
+    def engineer_features_task(merge_output):
+        # ✅ NEW: Engineer features from merged data
+        print("🔧 Engineering features from merged data...")
+
+        merged_df = merge_output["merged_df"]
+
+        # Engineer features
+        engineered_df = engineer_sql_features(merged_df)
+
+        print(f"✅ Features engineered successfully")
+        print(f"   Engineered rows: {len(engineered_df)}")
+        print(f"   Total columns: {len(engineered_df.columns)}")
+
+        return {
+            "merged_df": engineered_df,
+            "engineered_count": len(engineered_df),
+            "pred_class_col": "PredictedClass",
+            "pred_confidence_col": "Confidence"
+        }
+
+    @task
+    def insert_sql_task(engineered_data=None):
+        # ✅ NEW: Insert engineered features + predictions into SQL table
+        return insert_predictions_to_sql(engineered_data)
 
     # Flow
+    # read_data → snapshots → ingest → model_predict → JOIN → engineer_features → insert_sql
     raw_df = read_data_task()
     snap_df = snapshots_task(raw_df)
     data_paths = ingest_task(snap_df)
     model_output = model_task(data_paths)
-    insert_sql_task(model_output)  # ✅ NEW: Insert to SQL (replaces CSV save)
+    merge_output = merge_predictions_task(model_output)
+    engineered_output = engineer_features_task(merge_output)
+    insert_sql_task(engineered_output)
