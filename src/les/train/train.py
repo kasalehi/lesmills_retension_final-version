@@ -67,8 +67,8 @@ class ModelTraing:
             class_counts = Counter(y_train)
             total = sum(class_counts.values())
 
-            # ✅ OPTIMIZED class weights (best balance for both classes)
-            class_weights = {0: 5, 1: 5, 2: 1}
+            # ✅ PHASE 1: AGGRESSIVE class weights (2x boost to catch more churners)
+            class_weights = {0: 10, 1: 10, 2: 1}
             import numpy as np
             sample_weights = np.array([class_weights[y] for y in y_train])
 

@@ -155,8 +155,10 @@ def transform_and_train_balanced():
         thresholds = tuner.apply_optimal_thresholds(
             y_prob=y_prob,
             y_true=y_test,
-            target_classes=[0],  # ✅ Only optimize Class 0 (Early Churn 0-3mo)
-            metric="balanced_precision"  # ✅ Maximize precision while keeping recall >= 70%
+            target_classes=[0, 1],  # ✅ PHASE 1: Optimize BOTH churn classes (was [0])
+            metric="recall",  # ✅ PHASE 1: Prioritize recall to catch more churners (was "balanced_precision")
+            recall_threshold=0.65,  # ✅ PHASE 1: More aggressive (was 0.70)
+            precision_threshold=0.50  # ✅ PHASE 1: Accept lower precision (was 0.60)
         )
         y_pred_optimized = tuner.apply_thresholds_to_predictions(
             y_prob=y_prob,

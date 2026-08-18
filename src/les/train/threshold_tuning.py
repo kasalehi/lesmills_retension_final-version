@@ -1,298 +1,297 @@
 """
-Threshold Tuning for Multi-class Predictions
-Adjusts decision thresholds to optimize recall/precision for specific classes
+Threshold Tuning Module for Multi-Class Classification
+========================================================
+Optimizes decision thresholds for each class to boost recall and precision.
+
+This module handles threshold optimization for 3-class churn prediction:
+- Class 0: Early Churn (0-3 months)
+- Class 1: Medium Churn (3-6 months)
+- Class 2: No Churn (retention)
+
+Strategies:
+1. Lower thresholds for churn classes (0,1) to BOOST RECALL (catch more churners)
+2. Adjust precision vs recall tradeoff for each class
+3. Maintain No-Churn class accuracy
 """
 
 import numpy as np
-import pandas as pd
 from sklearn.metrics import (
-    precision_score,
-    recall_score,
-    f1_score,
-    confusion_matrix,
+    precision_score, recall_score, f1_score, roc_curve, auc
 )
-from src.les.logger import logger
-from src.les.exception import CustomException
-import sys
+from typing import Dict, List, Tuple, Optional
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class ThresholdTuner:
-    """Optimize prediction thresholds for multi-class classification"""
+    """
+    Optimizes decision thresholds for multi-class classification.
 
-    @staticmethod
-    def adjust_predictions(
-        y_prob: np.ndarray,
-        target_class: int,
-        boost_factor: float = 1.2,
-    ) -> np.ndarray:
+    For binary and multi-class problems with probability outputs,
+    this class finds optimal thresholds to maximize a given metric
+    while maintaining balance between precision and recall.
+    """
+
+    def __init__(self, n_classes: int = 3):
         """
-        Boost predictions for a specific class
+        Initialize ThresholdTuner.
 
         Args:
-            y_prob: Probability matrix from predict_proba (n_samples, n_classes)
-            target_class: Class to boost (0 or 1 for churn)
-            boost_factor: Multiplication factor for target class probs (>1 increases recall)
-
-        Returns:
-            Adjusted predictions
+            n_classes: Number of classes in the problem (default: 3 for churn)
         """
-        try:
-            y_prob_adjusted = y_prob.copy()
+        self.n_classes = n_classes
+        self.thresholds = {}
+        self.metrics_history = []
 
-            # Boost target class
-            y_prob_adjusted[:, target_class] *= boost_factor
-
-            # Renormalize
-            y_prob_adjusted = y_prob_adjusted / y_prob_adjusted.sum(axis=1, keepdims=True)
-
-            # Predict
-            y_pred_adjusted = np.argmax(y_prob_adjusted, axis=1)
-
-            logger.info(
-                f"✅ Applied {boost_factor}x boost to Class {target_class}"
-            )
-
-            return y_pred_adjusted
-
-        except Exception as e:
-            logger.error(f"❌ Error adjusting predictions: {str(e)}")
-            raise CustomException(e, sys)
-
-    @staticmethod
-    def find_optimal_threshold(
-        y_prob: np.ndarray,
-        y_true: np.ndarray,
-        target_class: int,
-        metric: str = "f1",
-    ) -> dict:
-        """
-        Find optimal boost factor for a target class
-
-        Args:
-            y_prob: Probability matrix
-            y_true: True labels
-            target_class: Class to optimize for (0 or 1)
-            metric: Metric to optimize ('f1', 'recall', 'precision')
-
-        Returns:
-            Dictionary with optimal threshold and metrics
-        """
-        try:
-            logger.info(f"🔍 Finding optimal threshold for Class {target_class}...")
-
-            # ✅ BALANCED boost range - optimize for BOTH precision AND recall
-            # 1.0-1.3 sweet spot: +8-12% recall gain with minimal precision loss
-            boost_factors = np.arange(1.0, 1.3, 0.05)  # 1.0 to 1.3 (balanced approach)
-            results = []
-
-            for boost in boost_factors:
-                y_pred = ThresholdTuner.adjust_predictions(
-                    y_prob, target_class, boost
-                )
-
-                precision = precision_score(
-                    y_true, y_pred, labels=[target_class], average="micro", zero_division=0
-                )
-                recall = recall_score(
-                    y_true, y_pred, labels=[target_class], average="micro", zero_division=0
-                )
-                f1 = f1_score(
-                    y_true, y_pred, labels=[target_class], average="micro", zero_division=0
-                )
-
-                if metric == "f1":
-                    score = f1
-                elif metric == "recall":
-                    score = recall
-                elif metric == "precision":
-                    score = precision
-                elif metric == "balanced_precision":
-                    # ✅ NEW: Maximize precision while maintaining recall >= 70%
-                    min_recall = 0.70
-                    if recall >= min_recall:
-                        score = precision  # Maximize precision if recall is good
-                    else:
-                        score = 0  # Penalize if recall drops below threshold
-                else:
-                    score = f1
-
-                results.append(
-                    {
-                        "boost_factor": boost,
-                        "precision": precision,
-                        "recall": recall,
-                        "f1": f1,
-                        "score": score,
-                    }
-                )
-
-            # Find best: prioritize high-scoring results, with recall >= 70% for "balanced_precision"
-            best_result = max(results, key=lambda x: x["score"])
-
-            logger.info(
-                f"✅ Optimal boost_factor: {best_result['boost_factor']:.2f}\n"
-                f"   Precision: {best_result['precision']:.4f}\n"
-                f"   Recall: {best_result['recall']:.4f}\n"
-                f"   F1: {best_result['f1']:.4f}"
-            )
-
-            return {
-                "target_class": target_class,
-                "optimal_boost": best_result["boost_factor"],
-                "metrics": {
-                    "precision": best_result["precision"],
-                    "recall": best_result["recall"],
-                    "f1": best_result["f1"],
-                },
-                "all_results": results,
-            }
-
-        except Exception as e:
-            logger.error(f"❌ Error finding optimal threshold: {str(e)}")
-            raise CustomException(e, sys)
-
-    @staticmethod
     def apply_optimal_thresholds(
+        self,
         y_prob: np.ndarray,
         y_true: np.ndarray,
-        target_classes: list = None,
-        metric: str = "f1",
-    ) -> dict:
+        target_classes: List[int] = None,
+        metric: str = "balanced_precision",
+        recall_threshold: float = 0.70,
+        precision_threshold: float = 0.60,
+        **kwargs
+    ) -> Dict[str, float]:
         """
-        Optimize thresholds for multiple classes
+        Find optimal thresholds for each class to maximize specified metric.
 
         Args:
-            y_prob: Probability matrix
-            y_true: True labels
-            target_classes: Classes to optimize (default: [0, 1])
-            metric: Metric to optimize
+            y_prob: Probability predictions (n_samples, n_classes)
+            y_true: True labels (n_samples,)
+            target_classes: List of class indices to optimize (default: [0, 1])
+            metric: Metric to optimize - "f1", "balanced_precision", "recall", "precision"
+            recall_threshold: Minimum recall to maintain (default: 0.70)
+            precision_threshold: Minimum precision to maintain (default: 0.60)
 
         Returns:
-            Dictionary with all optimized thresholds
+            Dictionary mapping class index to optimal threshold value
         """
-        try:
-            if target_classes is None:
-                target_classes = [0, 1]
+        if target_classes is None:
+            target_classes = [0, 1]  # Default: optimize for churn classes
 
-            logger.info("🚀 Optimizing thresholds for multiple classes...")
+        logger.info(f"🎯 Finding optimal thresholds for classes: {target_classes}")
+        logger.info(f"   Metric: {metric}")
+        logger.info(f"   Min Recall: {recall_threshold:.2f}, Min Precision: {precision_threshold:.2f}")
 
-            thresholds = {}
-            for target_class in target_classes:
-                result = ThresholdTuner.find_optimal_threshold(
-                    y_prob, y_true, target_class, metric
-                )
-                thresholds[f"class_{target_class}"] = result
+        # Initialize thresholds: default is max probability per sample
+        thresholds = {}
 
-            logger.info("✅ Threshold optimization complete!")
+        # For each target class, find optimal threshold
+        for class_idx in target_classes:
+            threshold = self._find_optimal_threshold_for_class(
+                y_prob=y_prob,
+                y_true=y_true,
+                class_idx=class_idx,
+                metric=metric,
+                recall_threshold=recall_threshold,
+                precision_threshold=precision_threshold
+            )
+            thresholds[class_idx] = threshold
 
-            return thresholds
+            logger.info(f"   Class {class_idx}: threshold = {threshold:.4f}")
 
-        except Exception as e:
-            logger.error(f"❌ Error applying optimal thresholds: {str(e)}")
-            raise CustomException(e, sys)
+        # Set default threshold for non-target classes
+        for class_idx in range(self.n_classes):
+            if class_idx not in thresholds:
+                thresholds[class_idx] = 0.0  # Default: any positive probability
 
-    @staticmethod
-    def apply_thresholds_to_predictions(
+        self.thresholds = thresholds
+        return thresholds
+
+    def _find_optimal_threshold_for_class(
+        self,
         y_prob: np.ndarray,
-        threshold_config: dict,
+        y_true: np.ndarray,
+        class_idx: int,
+        metric: str = "balanced_precision",
+        recall_threshold: float = 0.70,
+        precision_threshold: float = 0.60
+    ) -> float:
+        """
+        Find optimal threshold for a single class using grid search.
+
+        Args:
+            y_prob: Probability predictions (n_samples, n_classes)
+            y_true: True labels
+            class_idx: Target class index
+            metric: Metric to optimize
+            recall_threshold: Minimum recall to maintain
+            precision_threshold: Minimum precision to maintain
+
+        Returns:
+            Optimal threshold value for this class
+        """
+        # Get probabilities for this class
+        class_probs = y_prob[:, class_idx]
+        is_class = (y_true == class_idx).astype(int)
+
+        best_threshold = 0.5
+        best_score = -1
+        candidate_thresholds = np.linspace(0.0, 1.0, 101)  # 101 candidate thresholds
+
+        for threshold in candidate_thresholds:
+            # Predict: assign to class if prob >= threshold
+            y_pred_class = (class_probs >= threshold).astype(int)
+
+            # Skip if no positive predictions
+            if y_pred_class.sum() == 0:
+                continue
+
+            # Calculate metrics
+            try:
+                precision = precision_score(is_class, y_pred_class, zero_division=0)
+                recall = recall_score(is_class, y_pred_class, zero_division=0)
+                f1 = f1_score(is_class, y_pred_class, zero_division=0)
+            except:
+                continue
+
+            # Check constraints
+            if recall < recall_threshold or precision < precision_threshold:
+                continue
+
+            # Score based on metric
+            if metric == "f1":
+                score = f1
+            elif metric == "balanced_precision":
+                score = 0.6 * recall + 0.4 * precision  # Prefer recall for churn detection
+            elif metric == "recall":
+                score = recall
+            elif metric == "precision":
+                score = precision
+            else:
+                score = f1
+
+            if score > best_score:
+                best_score = score
+                best_threshold = threshold
+
+        # If no valid threshold found, use conservative default
+        if best_score == -1:
+            best_threshold = 0.5
+            logger.warning(f"   ⚠️  No valid threshold found for class {class_idx}, using 0.5")
+
+        return best_threshold
+
+    def apply_thresholds_to_predictions(
+        self,
+        y_prob: np.ndarray,
+        threshold_config: Dict[str, float]
     ) -> np.ndarray:
         """
-        Apply pre-computed thresholds to predictions
+        Apply thresholds to probability predictions to get final class predictions.
+
+        For multi-class problems:
+        1. For each class, check if its probability meets the threshold
+        2. Assign to class with highest probability among those meeting their thresholds
+        3. Fallback to argmax if no class meets its threshold
 
         Args:
-            y_prob: Probability matrix
-            threshold_config: Dictionary from find_optimal_threshold
+            y_prob: Probability predictions (n_samples, n_classes)
+            threshold_config: Dictionary mapping class index to threshold
 
         Returns:
-            Adjusted predictions
+            Predicted class labels (n_samples,)
         """
-        try:
-            y_pred = y_prob.copy()
+        n_samples = y_prob.shape[0]
+        y_pred = np.zeros(n_samples, dtype=int)
 
-            # Apply each class boost
-            for key, config in threshold_config.items():
-                target_class = config["target_class"]
-                boost = config["optimal_boost"]
+        for i in range(n_samples):
+            # Get probabilities for this sample
+            probs = y_prob[i, :]
 
-                y_pred[:, target_class] *= boost
+            # Check which classes meet their thresholds
+            valid_classes = []
+            for class_idx in range(self.n_classes):
+                threshold = threshold_config.get(class_idx, 0.0)
+                if probs[class_idx] >= threshold:
+                    valid_classes.append(class_idx)
 
-            # Renormalize
-            y_pred = y_pred / y_pred.sum(axis=1, keepdims=True)
-            y_pred_final = np.argmax(y_pred, axis=1)
+            # Assign to class with highest probability among valid ones
+            if valid_classes:
+                # Among valid classes, pick the one with highest probability
+                best_class = max(valid_classes, key=lambda c: probs[c])
+                y_pred[i] = best_class
+            else:
+                # Fallback: pick class with highest probability
+                y_pred[i] = np.argmax(probs)
 
-            logger.info("✅ Thresholds applied to predictions")
+        return y_pred
 
-            return y_pred_final
-
-        except Exception as e:
-            logger.error(f"❌ Error applying thresholds: {str(e)}")
-            raise CustomException(e, sys)
-
-    @staticmethod
-    def evaluate_threshold_performance(
+    def optimize_multi_class_thresholds(
+        self,
         y_prob: np.ndarray,
         y_true: np.ndarray,
-        original_pred: np.ndarray,
-        optimized_pred: np.ndarray,
-    ) -> pd.DataFrame:
+        metric: str = "balanced_f1",
+        weights: Optional[Dict[int, float]] = None
+    ) -> Dict[str, float]:
         """
-        Compare original vs optimized predictions
+        Optimize thresholds for all classes simultaneously.
+
+        This method adjusts thresholds to maximize overall weighted metric
+        while maintaining per-class performance bounds.
 
         Args:
-            y_prob: Probability matrix
+            y_prob: Probability predictions (n_samples, n_classes)
             y_true: True labels
-            original_pred: Original predictions
-            optimized_pred: Threshold-optimized predictions
+            metric: Metric to optimize ("balanced_f1", "macro_f1", "weighted_f1")
+            weights: Optional per-class weights for the metric
 
         Returns:
-            DataFrame comparing metrics
+            Optimized threshold configuration
         """
-        try:
-            comparison = []
+        if weights is None:
+            weights = {0: 1.5, 1: 1.5, 2: 1.0}  # Boost churn classes
 
-            for class_id in [0, 1]:
-                original_precision = precision_score(
-                    y_true, original_pred, labels=[class_id], average="micro", zero_division=0
-                )
-                original_recall = recall_score(
-                    y_true, original_pred, labels=[class_id], average="micro", zero_division=0
-                )
-                original_f1 = f1_score(
-                    y_true, original_pred, labels=[class_id], average="micro", zero_division=0
-                )
+        logger.info(f"🔧 Optimizing multi-class thresholds with metric: {metric}")
 
-                optimized_precision = precision_score(
-                    y_true, optimized_pred, labels=[class_id], average="micro", zero_division=0
-                )
-                optimized_recall = recall_score(
-                    y_true, optimized_pred, labels=[class_id], average="micro", zero_division=0
-                )
-                optimized_f1 = f1_score(
-                    y_true, optimized_pred, labels=[class_id], average="micro", zero_division=0
-                )
+        best_config = {i: 0.5 for i in range(self.n_classes)}
+        best_score = -1
 
-                comparison.append(
-                    {
-                        "Class": class_id,
-                        "Original_Precision": original_precision,
-                        "Optimized_Precision": optimized_precision,
-                        "Precision_Delta": optimized_precision - original_precision,
-                        "Original_Recall": original_recall,
-                        "Optimized_Recall": optimized_recall,
-                        "Recall_Delta": optimized_recall - original_recall,
-                        "Original_F1": original_f1,
-                        "Optimized_F1": optimized_f1,
-                        "F1_Delta": optimized_f1 - original_f1,
-                    }
-                )
+        # Grid search over threshold combinations (simplified)
+        threshold_candidates = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
 
-            df_comparison = pd.DataFrame(comparison)
-            logger.info(
-                f"📊 Threshold Optimization Results:\n{df_comparison.to_string()}"
-            )
+        # Only search over churn classes (class 0, 1) - too expensive otherwise
+        for t0 in threshold_candidates:
+            for t1 in threshold_candidates:
+                config = {0: t0, 1: t1, 2: 0.5}
+                y_pred = self.apply_thresholds_to_predictions(y_prob, config)
 
-            return df_comparison
+                # Calculate weighted metric
+                try:
+                    if metric == "balanced_f1":
+                        scores = [
+                            f1_score(y_true, y_pred, labels=[i], average="micro", zero_division=0)
+                            for i in range(self.n_classes)
+                        ]
+                        weighted_score = sum(w * s for w, s in zip(weights.values(), scores))
+                    else:
+                        weighted_score = f1_score(y_true, y_pred, average="weighted", zero_division=0)
 
-        except Exception as e:
-            logger.error(f"❌ Error evaluating threshold performance: {str(e)}")
-            raise CustomException(e, sys)
+                    if weighted_score > best_score:
+                        best_score = weighted_score
+                        best_config = config
+                except:
+                    continue
+
+        self.thresholds = best_config
+        logger.info(f"   Best config: {best_config} (score: {best_score:.4f})")
+
+        return best_config
+
+    def get_threshold_summary(self) -> str:
+        """Return a summary of the current thresholds."""
+        summary = "🎯 THRESHOLD SUMMARY:\n"
+        class_names = {
+            0: "Early Churn (0-3mo)",
+            1: "Medium Churn (3-6mo)",
+            2: "No Churn"
+        }
+
+        for class_idx, threshold in self.thresholds.items():
+            class_name = class_names.get(class_idx, f"Class {class_idx}")
+            summary += f"   {class_name}: {threshold:.4f}\n"
+
+        return summary
