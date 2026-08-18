@@ -627,10 +627,10 @@ with DAG(
             print("✅ NA/NaN converted to NULL (RunDate preserved)")
 
             # ===================================
-            # INSERT INTO SQL (Using SQLAlchemy for better SQL Server support)
+            # DELETE OLD RECORDS FOR THIS RunDate
             # ===================================
-            print("\n📤 Inserting into SQL table...")
-            print(f"📊 Total records to insert: {len(sql_insert_df)}")
+            print("\n🗑️  Deleting old records for this RunDate...")
+            print(f"   RunDate: {run_date}")
 
             from sqlalchemy import create_engine, text
 
@@ -642,6 +642,22 @@ with DAG(
             engine = create_engine(conn_str)
 
             table_name = "repo.MembershipRetentionPredictions"
+
+            # ✅ DELETE existing records for this RunDate (to avoid duplicates)
+            try:
+                delete_sql = f"DELETE FROM [{table_name}] WHERE RunDate = '{run_date}'"
+                with engine.connect() as connection:
+                    connection.execute(text(delete_sql))
+                    connection.commit()
+                print(f"✅ Old records deleted for RunDate: {run_date}")
+            except Exception as e:
+                print(f"⚠️  No old records found or delete failed (OK): {e}")
+
+            # ===================================
+            # INSERT INTO SQL (Using SQLAlchemy for better SQL Server support)
+            # ===================================
+            print("\n📤 Inserting new records into SQL table...")
+            print(f"📊 Total records to insert: {len(sql_insert_df)}")
 
             # ✅ Batch insert with progress logging
             batch_size = 100
