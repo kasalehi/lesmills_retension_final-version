@@ -194,6 +194,7 @@ def merge_predictions_with_features(predictions_data: dict):
         print(f"✅ Merge complete:")
         print(f"   Result rows: {len(merged_df)}")
         print(f"   Result cols: {len(merged_df.columns)}")
+        print(f"   Has end_date: {'end_date' in merged_df.columns}")
         print(f"   Rows with predictions: {merged_df['PredictedClass'].notna().sum()}")
         print(f"   Rows missing predictions: {merged_df['PredictedClass'].isna().sum()}")
 
@@ -597,8 +598,13 @@ with DAG(
             else:
                 sql_insert_df['PredictionConfidence'] = None
 
-            # EndDate (always NULL per requirement)
-            sql_insert_df['EndDate'] = None
+            # EndDate (from end_date column if available)
+            if 'end_date' in features_df.columns:
+                sql_insert_df['EndDate'] = pd.to_datetime(features_df['end_date'], errors='coerce')
+                print(f"✅ EndDate mapped from end_date column")
+            else:
+                sql_insert_df['EndDate'] = None
+                print("⚠️  end_date not found in merged data, setting EndDate to NULL")
 
             print(f"✅ Mapped {len(sql_insert_df.columns)} columns")
             print(f"✅ Prepared {len(sql_insert_df)} rows for insert")
