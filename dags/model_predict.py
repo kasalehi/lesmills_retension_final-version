@@ -5,12 +5,16 @@ from src.les.train.threshold_tuning import ThresholdTuner  # ✅ Phase 1 thresho
 from airflow import DAG
 from airflow.sdk import task
 from airflow.models import Variable
+from airflow.providers.microsoft.mssql.hooks.mssql import MsSqlHook
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 import numpy as np
 import joblib
+import logging
+
+logger = logging.getLogger(__name__)
 
 # ================================
 # PATHS
@@ -258,11 +262,275 @@ def save_predictions(predictions_and_data: dict = None):
 
 
 # ================================
+# INSERT PREDICTIONS INTO SQL
+# ================================
+def insert_predictions_to_sql(predictions_and_data: dict = None):
+    """
+    Insert predictions and features into SQL table.
+
+    Table: [Your_Database].[dbo].[tbl_churn_predictions]
+
+    Columns:
+      - RunDate (date): from predict_date
+      - MembershipID (uniqueidentifier): from data
+      - Prediction (int): from model prediction (0, 1, 2)
+      - PredictionConfidence (float): model confidence
+      - EndDate (date): NULL (always)
+      - All other columns: from features (NULL if missing/type mismatch)
+    """
+    try:
+        print("🔗 Connecting to SQL Database...")
+        hook = MsSqlHook(mssql_conn_id="mssql")
+
+        # Get predict_date
+        predict_date = Variable.get("predict_date", default_var="2024-01-01")
+        run_date = pd.to_datetime(predict_date).date()
+
+        print(f"📅 Run Date: {run_date}")
+
+        # Load features and predictions
+        print("📊 Loading features and predictions...")
+
+        # Load latest features
+        latest_parquet = max(
+            DATA_DIR.glob("df_merged_*.parquet"),
+            default=None,
+            key=lambda p: p.stat().st_mtime
+        )
+
+        if not latest_parquet:
+            raise FileNotFoundError("No feature data found")
+
+        features_df = pd.read_parquet(latest_parquet)
+        print(f"✅ Loaded features: {len(features_df)} rows")
+
+        # Load latest predictions
+        latest_pred_csv = max(
+            ARTIFACT_DIR.glob("predictions_*.csv"),
+            default=None,
+            key=lambda p: p.stat().st_mtime
+        )
+
+        if not latest_pred_csv:
+            raise FileNotFoundError("No predictions found")
+
+        pred_df = pd.read_csv(latest_pred_csv)
+        print(f"✅ Loaded predictions: {len(pred_df)} rows")
+
+        # ===================================
+        # MAP COLUMNS TO SQL TABLE
+        # ===================================
+        print("\n📋 Mapping columns to SQL schema...")
+
+        # Column mapping: DataFrame → SQL Table
+        # If column doesn't exist in features, it will be NULL
+        sql_insert_df = pd.DataFrame()
+
+        # Direct mappings
+        sql_insert_df['RunDate'] = run_date
+
+        # MembershipID (uniqueidentifier)
+        if 'MembershipID' in features_df.columns:
+            sql_insert_df['MembershipID'] = features_df['MembershipID'].astype(str)
+        else:
+            sql_insert_df['MembershipID'] = None
+            print("⚠️  MembershipID not found in features")
+
+        # MemberId (nvarchar)
+        if 'member_id' in features_df.columns:
+            sql_insert_df['MemberId'] = features_df['member_id'].astype(str)
+        else:
+            sql_insert_df['MemberId'] = None
+
+        # Gender
+        sql_insert_df['Gender'] = features_df.get('Gender', None)
+
+        # Age (int)
+        if 'Age' in features_df.columns:
+            sql_insert_df['Age'] = pd.to_numeric(features_df['Age'], errors='coerce').astype('Int64')
+        else:
+            sql_insert_df['Age'] = None
+
+        # SubCategory
+        sql_insert_df['SubCategory'] = features_df.get('SubCategory', None)
+
+        # Channel
+        sql_insert_df['Channel'] = features_df.get('Channel', None)
+
+        # ClubName
+        sql_insert_df['ClubName'] = features_df.get('ClubName', None)
+
+        # MembershipTypeDesc
+        sql_insert_df['MembershipTypeDesc'] = features_df.get('MembershipTypeDesc', None)
+
+        # Term
+        sql_insert_df['Term'] = features_df.get('Term', None)
+
+        # TermDays (int)
+        if 'TermDays' in features_df.columns:
+            sql_insert_df['TermDays'] = pd.to_numeric(features_df['TermDays'], errors='coerce').astype('Int64')
+        else:
+            sql_insert_df['TermDays'] = None
+
+        # Lump Sum Flag (bit/int)
+        if 'Lump Sum Flag' in features_df.columns:
+            sql_insert_df['Lump Sum Flag'] = pd.to_numeric(features_df['Lump Sum Flag'], errors='coerce').astype('Int64')
+        else:
+            sql_insert_df['Lump Sum Flag'] = None
+
+        # RegularPayment (float)
+        if 'RegularPayment' in features_df.columns:
+            sql_insert_df['RegularPayment'] = pd.to_numeric(features_df['RegularPayment'], errors='coerce').astype('float64')
+        else:
+            sql_insert_df['RegularPayment'] = None
+
+        # Base Amount (float)
+        if 'Base Amount' in features_df.columns:
+            sql_insert_df['Base Amount'] = pd.to_numeric(features_df['Base Amount'], errors='coerce').astype('float64')
+        else:
+            sql_insert_df['Base Amount'] = None
+
+        # TenureDays (int)
+        if 'TenureDays' in features_df.columns:
+            sql_insert_df['TenureDays'] = pd.to_numeric(features_df['TenureDays'], errors='coerce').astype('Int64')
+        else:
+            sql_insert_df['TenureDays'] = None
+
+        # DaysSinceOriginalStart (int)
+        if 'DaysSinceOriginalStart' in features_df.columns:
+            sql_insert_df['DaysSinceOriginalStart'] = pd.to_numeric(features_df['DaysSinceOriginalStart'], errors='coerce').astype('Int64')
+        else:
+            sql_insert_df['DaysSinceOriginalStart'] = None
+
+        # DaysSinceLastAccessed (int)
+        if 'DaysSinceLastAccessed' in features_df.columns:
+            sql_insert_df['DaysSinceLastAccessed'] = pd.to_numeric(features_df['DaysSinceLastAccessed'], errors='coerce').astype('Int64')
+        else:
+            sql_insert_df['DaysSinceLastAccessed'] = None
+
+        # TotalAttendanceToDate (int)
+        if 'TotalAttendanceToDate' in features_df.columns:
+            sql_insert_df['TotalAttendanceToDate'] = pd.to_numeric(features_df['TotalAttendanceToDate'], errors='coerce').astype('Int64')
+        else:
+            sql_insert_df['TotalAttendanceToDate'] = None
+
+        # Visits_Last90d (int)
+        if 'Visits_Last90d' in features_df.columns:
+            sql_insert_df['Visits_Last90d'] = pd.to_numeric(features_df['Visits_Last90d'], errors='coerce').astype('Int64')
+        else:
+            sql_insert_df['Visits_Last90d'] = None
+
+        # Visits_Last30d (int)
+        if 'Visits_Last30d' in features_df.columns:
+            sql_insert_df['Visits_Last30d'] = pd.to_numeric(features_df['Visits_Last30d'], errors='coerce').astype('Int64')
+        else:
+            sql_insert_df['Visits_Last30d'] = None
+
+        # EndedWithinCoolingPeriod (int)
+        if 'EndedWithinCoolingPeriod' in features_df.columns:
+            sql_insert_df['EndedWithinCoolingPeriod'] = pd.to_numeric(features_df['EndedWithinCoolingPeriod'], errors='coerce').astype('Int64')
+        else:
+            sql_insert_df['EndedWithinCoolingPeriod'] = None
+
+        # EWS_Pct (float) - from ews_pct
+        if 'ews_pct' in features_df.columns:
+            sql_insert_df['EWS_Pct'] = pd.to_numeric(features_df['ews_pct'], errors='coerce').astype('float64')
+        else:
+            sql_insert_df['EWS_Pct'] = None
+
+        # Risk_Band (nvarchar) - from risk_band
+        if 'risk_band' in features_df.columns:
+            sql_insert_df['Risk_Band'] = features_df['risk_band'].astype(str)
+        else:
+            sql_insert_df['Risk_Band'] = None
+
+        # Engineered features (if available, else NULL)
+        engineered_features = [
+            'Engagement_Rate', 'Recent_Activity_Ratio', 'Declining_Engagement',
+            'Monthly_Avg_Visits', 'Payment_to_Attendance_Ratio', 'Recent_Payment_to_Visits',
+            'Tenure_Quartile', 'Early_Churn_Risk', 'Inactivity_Ratio',
+            'Attendance_Dropoff', 'Access_Gap_Months', 'High_Inactivity'
+        ]
+
+        for feature in engineered_features:
+            if feature in features_df.columns:
+                sql_insert_df[feature] = pd.to_numeric(features_df[feature], errors='coerce')
+            else:
+                sql_insert_df[feature] = None
+
+        # Model predictions
+        sql_insert_df['Prediction'] = pred_df['PredictedClass'].astype('int64')
+        sql_insert_df['PredictionConfidence'] = pred_df['Confidence'].astype('float64')
+
+        # EndDate (always NULL per requirement)
+        sql_insert_df['EndDate'] = None
+
+        print(f"✅ Mapped {len(sql_insert_df.columns)} columns")
+        print(f"✅ Prepared {len(sql_insert_df)} rows for insert")
+
+        # ===================================
+        # INSERT INTO SQL
+        # ===================================
+        print("\n📤 Inserting into SQL table...")
+
+        # Build SQL insert statement
+        table_name = "[dbo].[tbl_churn_predictions]"  # Adjust if different database/schema
+        columns = ', '.join([f"[{col}]" for col in sql_insert_df.columns])
+        placeholders = ', '.join(['?' for _ in sql_insert_df.columns])
+
+        sql_insert = f"""
+        INSERT INTO {table_name} ({columns})
+        VALUES ({placeholders})
+        """
+
+        # Insert using pyodbc
+        conn = hook.get_conn()
+        cursor = conn.cursor()
+
+        inserted_count = 0
+        for idx, row in sql_insert_df.iterrows():
+            try:
+                cursor.execute(sql_insert, row.tolist())
+                inserted_count += 1
+            except Exception as e:
+                print(f"⚠️  Row {idx} insert failed: {e}")
+                continue
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        print(f"✅ Successfully inserted {inserted_count}/{len(sql_insert_df)} records")
+
+        # ===================================
+        # SUMMARY STATS
+        # ===================================
+        print("\n📊 Insert Summary:")
+        print(f"   Total records: {len(sql_insert_df)}")
+        print(f"   Inserted: {inserted_count}")
+        print(f"   Failed: {len(sql_insert_df) - inserted_count}")
+        print(f"   Table: {table_name}")
+        print(f"   Columns: {len(sql_insert_df.columns)}")
+
+        return {
+            "status": "success",
+            "records_inserted": inserted_count,
+            "total_records": len(sql_insert_df),
+            "table": table_name,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        print(f"❌ SQL insert failed: {str(e)}")
+        raise Exception(f"Insert to SQL failed: {e}")
+
+
+# ================================
 # DAG
 # ================================
 with DAG(
     dag_id="ModelPredict",
-    description="Prepare data + apply Phase 1 trained model with optimized thresholds for churn prediction",
+    description="Apply Phase 1 model + insert predictions to SQL (with feature engineering)",
     schedule=None,
     start_date=datetime(2024, 1, 1),
     catchup=False
@@ -314,15 +582,14 @@ with DAG(
         }
 
     @task
-    def save_task(predictions_data=None):
-        # Allow running task independently (without model_task output)
-        if predictions_data is None:
-            print("⏭️  save_task running independently...")
-        return save_predictions(predictions_data)
+    def insert_sql_task(predictions_data=None):
+        # ✅ NEW: Insert predictions into SQL table
+        # Combines features + predictions and inserts
+        return insert_predictions_to_sql(predictions_data)
 
     # Flow
     raw_df = read_data_task()
     snap_df = snapshots_task(raw_df)
     data_paths = ingest_task(snap_df)
     model_output = model_task(data_paths)
-    save_task(model_output)
+    insert_sql_task(model_output)  # ✅ NEW: Insert to SQL (replaces CSV save)
