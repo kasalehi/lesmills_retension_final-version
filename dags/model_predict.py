@@ -399,6 +399,10 @@ with DAG(
         """
         Insert predictions and engineered features directly into SQL table.
         All logic defined inside this task function.
+
+        Can run independently:
+          - If engineered_data passed: Use it (from DAG pipeline)
+          - If None: Load from latest parquet files (standalone mode)
         """
         try:
             # ✅ Get predict_date from Airflow Variable (from UI)
@@ -417,10 +421,26 @@ with DAG(
 
             print("📊 Loading merged and engineered data...")
 
+            # ✅ FALLBACK: If no data passed, load from latest parquet (standalone mode)
             if engineered_data is None or "merged_df" not in engineered_data:
-                raise FileNotFoundError("No engineered data passed from feature engineering task")
+                print("⚠️  No engineered_data from pipeline, trying standalone mode...")
 
-            features_df = engineered_data["merged_df"]
+                # Find latest merged parquet file
+                latest_parquet = max(
+                    DATA_DIR.glob("df_merged_*.parquet"),
+                    default=None,
+                    key=lambda p: p.stat().st_mtime
+                )
+
+                if not latest_parquet:
+                    raise FileNotFoundError("No parquet files found in DATA_DIR. Run full DAG pipeline first or check file paths.")
+
+                print(f"📂 Loading from file: {latest_parquet.name}")
+                features_df = pd.read_parquet(latest_parquet)
+                print(f"✅ Loaded {len(features_df)} rows from parquet")
+            else:
+                features_df = engineered_data["merged_df"]
+                print("✅ Using engineered_data from pipeline")
 
             print(f"✅ Loaded merged + engineered data: {len(features_df)} rows")
             print(f"   Has predictions: {'PredictedClass' in features_df.columns}")
