@@ -406,12 +406,11 @@ with DAG(
         """
         try:
             # ✅ Get predict_date from Airflow Variable (from UI)
-            predict_date = Variable.get("predict_date", default_var="2024-01-01")
-            run_date = pd.to_datetime(predict_date).date()
+            # RunDate = predict_date directly (no conversion)
+            run_date = Variable.get("predict_date", default_var="2024-01-01")
 
             print(f"\n📅 INSERT_SQL_TASK:")
-            print(f"   Predict Date (from Airflow Variable): {predict_date}")
-            print(f"   Run Date (for SQL): {run_date}")
+            print(f"   RunDate (from Airflow Variable predict_date): {run_date}")
 
             # ===================================
             # LOAD DATA
