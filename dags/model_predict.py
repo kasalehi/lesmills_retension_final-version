@@ -2,6 +2,7 @@ from src.les.train.run import snapshot as snapshot_fn
 from src.les.train.readdata import read_data as read_data_fn
 from src.les.train.ingestfortrain import ingest_data
 from src.les.train.threshold_tuning import ThresholdTuner  # ✅ Phase 1 thresholds
+from src.les.train.feature_engineer_sql import engineer_sql_features  # ✅ Feature engineering
 from airflow import DAG
 from airflow.sdk import task
 from airflow.models import Variable
@@ -320,6 +321,13 @@ def insert_predictions_to_sql(predictions_and_data: dict = None):
 
         print(f"✅ Loaded features: {len(features_df)} rows")
         print(f"✅ Loaded predictions: {len(pred_df)} rows")
+
+        # ===================================
+        # ENGINEER FEATURES
+        # ===================================
+        print("\n🔧 Engineering SQL features...")
+        features_df = engineer_sql_features(features_df)
+        print(f"✅ Features engineered: 12 new features added")
 
         # ===================================
         # MAP COLUMNS TO SQL TABLE
