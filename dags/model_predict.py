@@ -315,7 +315,7 @@ def save_predictions(predictions_and_data: dict = None):
 # ================================
 # INSERT PREDICTIONS INTO SQL
 # ================================
-def insert_predictions_to_sql(engineered_data: dict = None):
+def insert_predictions_to_sql(engineered_data: dict = None, run_date=None):
     """
     Insert predictions and engineered features into SQL table.
 
@@ -323,9 +323,10 @@ def insert_predictions_to_sql(engineered_data: dict = None):
 
     Input:
       - engineered_data: dict with 'merged_df' that includes predictions + engineered features
+      - run_date: date from Airflow predict_date variable (passed from insert_sql_task)
 
     Columns:
-      - RunDate (date): from predict_date
+      - RunDate (date): from predict_date variable
       - MembershipID (uniqueidentifier): from data
       - Prediction (int): from model prediction (0, 1, 2)
       - PredictionConfidence (float): model confidence
@@ -336,12 +337,14 @@ def insert_predictions_to_sql(engineered_data: dict = None):
         print("🔗 Connecting to SQL Database...")
         hook = MsSqlHook(mssql_conn_id="mssql")
 
-        # ✅ Get predict_date from Airflow variable
-        predict_date = Variable.get("predict_date", default_var="2024-01-01")
-        run_date = pd.to_datetime(predict_date).date()
+        # ✅ Use run_date passed from insert_sql_task
+        if run_date is None:
+            # Fallback if not passed
+            predict_date = Variable.get("predict_date", default_var="2024-01-01")
+            run_date = pd.to_datetime(predict_date).date()
+            print(f"⚠️  RunDate not passed, using fallback from Variable")
 
-        print(f"📅 Predict Date (from Airflow Variable): {predict_date}")
-        print(f"📅 Run Date (converted to date): {run_date}")
+        print(f"📊 Using RunDate for SQL insert: {run_date}")
 
         # Load merged + engineered data
         print("📊 Loading merged and engineered data...")
@@ -731,8 +734,16 @@ with DAG(
 
     @task
     def insert_sql_task(engineered_data=None):
-        # ✅ NEW: Insert engineered features + predictions into SQL table
-        return insert_predictions_to_sql(engineered_data)
+        # ✅ Get predict_date from Airflow Variable (from UI)
+        predict_date = Variable.get("predict_date", default_var="2024-01-01")
+        run_date = pd.to_datetime(predict_date).date()
+
+        print(f"\n📅 INSERT_SQL_TASK:")
+        print(f"   Predict Date (from Airflow Variable): {predict_date}")
+        print(f"   Run Date (for SQL): {run_date}")
+
+        # ✅ Pass run_date to insert function
+        return insert_predictions_to_sql(engineered_data, run_date)
 
     # Flow
     # read_data → snapshots → ingest → model_predict → JOIN → engineer_features → insert_sql
