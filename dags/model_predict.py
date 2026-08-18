@@ -453,8 +453,10 @@ with DAG(
             sql_insert_df = pd.DataFrame()
 
             # ✅ Direct mappings - RunDate from predict_date variable
-            sql_insert_df['RunDate'] = run_date
+            # IMPORTANT: Set with correct length = len(features_df)
+            sql_insert_df['RunDate'] = [run_date] * len(features_df)
             print(f"✅ RunDate set to: {run_date} (from predict_date variable)")
+            print(f"   Set for {len(features_df)} rows")
 
             # MembershipID (uniqueidentifier)
             if 'MembershipID' in features_df.columns:
