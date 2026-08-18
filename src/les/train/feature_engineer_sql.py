@@ -34,6 +34,20 @@ def engineer_sql_features(df: pd.DataFrame) -> pd.DataFrame:
     logger.info("🔧 Engineering features for SQL insertion...")
 
     # =========================================================================
+    # CONVERT COLUMNS TO NUMERIC (Handle string types from SQL)
+    # =========================================================================
+    numeric_cols = [
+        'TenureDays', 'TotalAttendanceToDate', 'Visits_Last30d', 'Visits_Last90d',
+        'DaysSinceLastAccessed', 'RegularPayment', 'Base Amount', 'Age', 'TermDays'
+    ]
+
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    logger.info("✅ Columns converted to numeric")
+
+    # =========================================================================
     # 1. ENGAGEMENT_RATE: Visits per day of tenure
     # =========================================================================
     df['Engagement_Rate'] = (
