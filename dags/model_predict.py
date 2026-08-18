@@ -474,7 +474,7 @@ def insert_predictions_to_sql(predictions_and_data: dict = None):
         print("\n📤 Inserting into SQL table...")
 
         # Build SQL insert statement
-        table_name = "[dbo].[tbl_churn_predictions]"  # Adjust if different database/schema
+        table_name = "repo.MembershipRetentionPredictions"  # ✅ Updated to actual table
         columns = ', '.join([f"[{col}]" for col in sql_insert_df.columns])
         placeholders = ', '.join(['?' for _ in sql_insert_df.columns])
 
