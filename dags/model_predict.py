@@ -1,6 +1,7 @@
 from src.les.train.run import snapshot as snapshot_fn
 from src.les.train.readdata import read_data as read_data_fn
 from src.les.train.ingestfortrain import ingest_data
+from src.les.train.threshold_tuning import ThresholdTuner  # ✅ Phase 1 thresholds
 from airflow import DAG
 from airflow.sdk import task
 from airflow.models import Variable
@@ -82,19 +83,38 @@ def apply_model(data_paths: dict):
 
         # Multi-class prediction (classes 1, 2, 3)
         y_pred_proba = model.predict_proba(X)  # Shape: (n_samples, 3 or 2)
-        y_pred = model.predict(X)
+
+        # ✅ PHASE 1: Apply optimized thresholds
+        print(f"\n🎯 PHASE 1: Applying optimized thresholds...")
+        try:
+            # Find latest thresholds
+            threshold_files = sorted(ARTIFACT_DIR.glob("optimal_thresholds_*.pkl"), reverse=True)
+            if threshold_files:
+                thresholds_path = threshold_files[0]
+                thresholds = joblib.load(thresholds_path)
+                print(f"✅ Thresholds loaded: {thresholds_path.name}")
+                print(f"   Thresholds: {thresholds}")
+
+                # Apply thresholds using ThresholdTuner
+                tuner = ThresholdTuner()
+                y_pred_labeled = tuner.apply_thresholds_to_predictions(
+                    y_prob=y_pred_proba,
+                    threshold_config=thresholds
+                )
+                print(f"✅ Applied optimized thresholds")
+            else:
+                # Fallback: Use default predictions if no thresholds found
+                print(f"⚠️  No optimized thresholds found, using default predictions")
+                y_pred_labeled = model.predict(X)
+        except Exception as e:
+            print(f"⚠️  Error loading thresholds: {e}, using default predictions")
+            y_pred_labeled = model.predict(X)
 
         print(f"🔍 Model prediction debug:")
-        print(f"   Unique predictions: {np.unique(y_pred)}")
-        print(f"   Prediction shape: {y_pred.shape}")
+        print(f"   Unique predictions: {np.unique(y_pred_labeled)}")
+        print(f"   Prediction shape: {y_pred_labeled.shape}")
         print(f"   Proba shape: {y_pred_proba.shape}")
-        print(f"   Sample predictions: {y_pred[:10]}")
-
-        # Use model predictions directly (0, 1, 2) - no mapping
-        # 0 = Churn 0-3 months
-        # 1 = Churn 3-6 months
-        # 2 = All others (no churn OR churn after 6 months)
-        y_pred_labeled = y_pred
+        print(f"   Sample predictions: {y_pred_labeled[:10]}")
 
         print(f"✅ Using model predictions directly (0, 1, 2)")
         print(f"   Class 0: Churn 0-3 months")
@@ -242,7 +262,7 @@ def save_predictions(predictions_and_data: dict = None):
 # ================================
 with DAG(
     dag_id="ModelPredict",
-    description="Prepare data + apply trained model for 3-class prediction (1, 2, 3)",
+    description="Prepare data + apply Phase 1 trained model with optimized thresholds for churn prediction",
     schedule=None,
     start_date=datetime(2024, 1, 1),
     catchup=False
