@@ -473,6 +473,22 @@ def insert_predictions_to_sql(predictions_and_data: dict = None):
         print(f"✅ Prepared {len(sql_insert_df)} rows for insert")
 
         # ===================================
+        # CONVERT NA/NaN TO NONE (SQL NULL)
+        # ===================================
+        print("\n🔧 Converting NA/NaN to SQL NULL...")
+
+        # Replace all pd.NA and NaN with None for SQL compatibility
+        sql_insert_df = sql_insert_df.where(pd.notna(sql_insert_df), None)
+
+        # Also handle pd.NA explicitly
+        for col in sql_insert_df.columns:
+            sql_insert_df[col] = sql_insert_df[col].apply(
+                lambda x: None if pd.isna(x) else x
+            )
+
+        print("✅ NA/NaN converted to NULL")
+
+        # ===================================
         # INSERT INTO SQL
         # ===================================
         print("\n📤 Inserting into SQL table...")
