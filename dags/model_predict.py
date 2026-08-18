@@ -489,38 +489,67 @@ def insert_predictions_to_sql(predictions_and_data: dict = None):
         print("✅ NA/NaN converted to NULL")
 
         # ===================================
-        # INSERT INTO SQL
+        # INSERT INTO SQL (Using SQLAlchemy for better SQL Server support)
         # ===================================
         print("\n📤 Inserting into SQL table...")
 
-        # Build SQL insert statement
-        table_name = "repo.MembershipRetentionPredictions"  # ✅ Updated to actual table
-        columns = ', '.join([f"[{col}]" for col in sql_insert_df.columns])
-        placeholders = ', '.join(['?' for _ in sql_insert_df.columns])
+        try:
+            from sqlalchemy import create_engine, text
 
-        sql_insert = f"""
-        INSERT INTO {table_name} ({columns})
-        VALUES ({placeholders})
-        """
+            # Get connection string from MsSql hook
+            conn = hook.get_conn()
+            conn_str = hook.get_uri()
 
-        # Insert using pyodbc
-        conn = hook.get_conn()
-        cursor = conn.cursor()
+            # Create SQLAlchemy engine
+            engine = create_engine(conn_str)
 
-        inserted_count = 0
-        for idx, row in sql_insert_df.iterrows():
-            try:
-                cursor.execute(sql_insert, row.tolist())
-                inserted_count += 1
-            except Exception as e:
-                print(f"⚠️  Row {idx} insert failed: {e}")
-                continue
+            table_name = "repo.MembershipRetentionPredictions"
 
-        conn.commit()
-        cursor.close()
-        conn.close()
+            # Use to_sql for proper SQL Server insertion
+            # if_exists='append' to add to existing table
+            sql_insert_df.to_sql(
+                table_name.split('.')[-1],  # table name
+                engine,
+                schema=table_name.split('.')[0] if '.' in table_name else 'dbo',  # schema
+                if_exists='append',
+                index=False,
+                method='multi'  # Batch insert
+            )
 
-        print(f"✅ Successfully inserted {inserted_count}/{len(sql_insert_df)} records")
+            inserted_count = len(sql_insert_df)
+            conn.close()
+            engine.dispose()
+
+            print(f"✅ Successfully inserted {inserted_count}/{len(sql_insert_df)} records")
+
+        except Exception as e:
+            print(f"❌ SQLAlchemy insert failed: {e}")
+            print("⚠️  Falling back to row-by-row insert...")
+
+            # Fallback: row-by-row insert with SQL Server syntax
+            conn = hook.get_conn()
+            cursor = conn.cursor()
+
+            table_name = "repo.MembershipRetentionPredictions"
+            columns = ', '.join([f"[{col}]" for col in sql_insert_df.columns])
+            placeholders = ', '.join(['?' for _ in sql_insert_df.columns])
+
+            sql_insert = f"INSERT INTO [{table_name}] ({columns}) VALUES ({placeholders})"
+
+            inserted_count = 0
+            for idx, row in sql_insert_df.iterrows():
+                try:
+                    cursor.execute(sql_insert, tuple(row.tolist()))
+                    inserted_count += 1
+                except Exception as e:
+                    print(f"⚠️  Row {idx} insert failed: {e}")
+                    continue
+
+            conn.commit()
+            cursor.close()
+            conn.close()
+
+            print(f"✅ Successfully inserted {inserted_count}/{len(sql_insert_df)} records")
 
         # ===================================
         # SUMMARY STATS
