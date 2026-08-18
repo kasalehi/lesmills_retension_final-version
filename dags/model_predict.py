@@ -336,11 +336,12 @@ def insert_predictions_to_sql(engineered_data: dict = None):
         print("🔗 Connecting to SQL Database...")
         hook = MsSqlHook(mssql_conn_id="mssql")
 
-        # Get predict_date
+        # ✅ Get predict_date from Airflow variable
         predict_date = Variable.get("predict_date", default_var="2024-01-01")
         run_date = pd.to_datetime(predict_date).date()
 
-        print(f"📅 Run Date: {run_date}")
+        print(f"📅 Predict Date (from Airflow Variable): {predict_date}")
+        print(f"📅 Run Date (converted to date): {run_date}")
 
         # Load merged + engineered data
         print("📊 Loading merged and engineered data...")
@@ -367,8 +368,9 @@ def insert_predictions_to_sql(engineered_data: dict = None):
         # If column doesn't exist in features, it will be NULL
         sql_insert_df = pd.DataFrame()
 
-        # Direct mappings
+        # ✅ Direct mappings - RunDate from predict_date variable
         sql_insert_df['RunDate'] = run_date
+        print(f"✅ RunDate set to: {run_date} (from predict_date variable)")
 
         # MembershipID (uniqueidentifier)
         if 'MembershipID' in features_df.columns:
