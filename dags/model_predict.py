@@ -291,30 +291,34 @@ def insert_predictions_to_sql(predictions_and_data: dict = None):
         # Load features and predictions
         print("📊 Loading features and predictions...")
 
-        # Load latest features
-        latest_parquet = max(
-            DATA_DIR.glob("df_merged_*.parquet"),
-            default=None,
-            key=lambda p: p.stat().st_mtime
-        )
+        # ✅ Use predictions_data from model_task
+        if predictions_and_data is None or "predictions_df" not in predictions_and_data:
+            # Fallback: load from files if no data passed
+            print("⚠️  No predictions passed from model_task, trying to load from files...")
+            latest_parquet = max(
+                DATA_DIR.glob("df_merged_*.parquet"),
+                default=None,
+                key=lambda p: p.stat().st_mtime
+            )
+            if not latest_parquet:
+                raise FileNotFoundError("No feature data found")
+            features_df = pd.read_parquet(latest_parquet)
 
-        if not latest_parquet:
-            raise FileNotFoundError("No feature data found")
+            latest_pred_csv = max(
+                ARTIFACT_DIR.glob("predictions_*.csv"),
+                default=None,
+                key=lambda p: p.stat().st_mtime
+            )
+            if not latest_pred_csv:
+                raise FileNotFoundError("No predictions found")
+            pred_df = pd.read_csv(latest_pred_csv)
+        else:
+            # ✅ Use data from model_task (preferred)
+            pred_df = predictions_and_data["predictions_df"]
+            features_path = predictions_and_data["features_path"]
+            features_df = pd.read_parquet(features_path)
 
-        features_df = pd.read_parquet(latest_parquet)
         print(f"✅ Loaded features: {len(features_df)} rows")
-
-        # Load latest predictions
-        latest_pred_csv = max(
-            ARTIFACT_DIR.glob("predictions_*.csv"),
-            default=None,
-            key=lambda p: p.stat().st_mtime
-        )
-
-        if not latest_pred_csv:
-            raise FileNotFoundError("No predictions found")
-
-        pred_df = pd.read_csv(latest_pred_csv)
         print(f"✅ Loaded predictions: {len(pred_df)} rows")
 
         # ===================================
