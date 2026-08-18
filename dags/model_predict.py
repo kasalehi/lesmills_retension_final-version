@@ -538,6 +538,7 @@ def insert_predictions_to_sql(engineered_data: dict = None):
         # INSERT INTO SQL (Using SQLAlchemy for better SQL Server support)
         # ===================================
         print("\n📤 Inserting into SQL table...")
+        print(f"📊 Total records to insert: {len(sql_insert_df)}")
 
         try:
             from sqlalchemy import create_engine, text
@@ -551,28 +552,44 @@ def insert_predictions_to_sql(engineered_data: dict = None):
 
             table_name = "repo.MembershipRetentionPredictions"
 
-            # Use to_sql for proper SQL Server insertion
-            # if_exists='append' to add to existing table
-            sql_insert_df.to_sql(
-                table_name.split('.')[-1],  # table name
-                engine,
-                schema=table_name.split('.')[0] if '.' in table_name else 'dbo',  # schema
-                if_exists='append',
-                index=False,
-                method='multi'  # Batch insert
-            )
+            # ✅ NEW: Batch insert with progress logging
+            batch_size = 100
+            total_rows = len(sql_insert_df)
+            inserted_count = 0
 
-            inserted_count = len(sql_insert_df)
+            for i in range(0, total_rows, batch_size):
+                batch_df = sql_insert_df.iloc[i : i + batch_size]
+
+                try:
+                    batch_df.to_sql(
+                        table_name.split('.')[-1],  # table name
+                        engine,
+                        schema=table_name.split('.')[0] if '.' in table_name else 'dbo',  # schema
+                        if_exists='append',
+                        index=False,
+                        method='multi'
+                    )
+
+                    inserted_count += len(batch_df)
+                    progress_pct = (inserted_count / total_rows) * 100
+
+                    # ✅ Log every 100 rows
+                    print(f"✅ Inserted {inserted_count}/{total_rows} rows ({progress_pct:.1f}%)")
+
+                except Exception as e:
+                    print(f"❌ Batch {i}-{i+batch_size} failed: {e}")
+                    raise
+
             conn.close()
             engine.dispose()
 
-            print(f"✅ Successfully inserted {inserted_count}/{len(sql_insert_df)} records")
+            print(f"\n✅ Successfully inserted {inserted_count}/{total_rows} records (100.0%)")
 
         except Exception as e:
             print(f"❌ SQLAlchemy insert failed: {e}")
             print("⚠️  Falling back to row-by-row insert...")
 
-            # Fallback: row-by-row insert with SQL Server syntax
+            # Fallback: row-by-row insert with SQL Server syntax + progress logging
             conn = hook.get_conn()
             cursor = conn.cursor()
 
@@ -583,10 +600,18 @@ def insert_predictions_to_sql(engineered_data: dict = None):
             sql_insert = f"INSERT INTO [{table_name}] ({columns}) VALUES ({placeholders})"
 
             inserted_count = 0
+            total_rows = len(sql_insert_df)
+
             for idx, row in sql_insert_df.iterrows():
                 try:
                     cursor.execute(sql_insert, tuple(row.tolist()))
                     inserted_count += 1
+
+                    # ✅ Log every 100 rows
+                    if (inserted_count % 100) == 0 or inserted_count == total_rows:
+                        progress_pct = (inserted_count / total_rows) * 100
+                        print(f"✅ Inserted {inserted_count}/{total_rows} rows ({progress_pct:.1f}%)")
+
                 except Exception as e:
                     print(f"⚠️  Row {idx} insert failed: {e}")
                     continue
@@ -595,7 +620,7 @@ def insert_predictions_to_sql(engineered_data: dict = None):
             cursor.close()
             conn.close()
 
-            print(f"✅ Successfully inserted {inserted_count}/{len(sql_insert_df)} records")
+            print(f"\n✅ Successfully inserted {inserted_count}/{total_rows} records")
 
         # ===================================
         # SUMMARY STATS
