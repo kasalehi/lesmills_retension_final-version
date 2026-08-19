@@ -1,7 +1,7 @@
 {
-    "accuracy": 0.7953608854350642,
+    "accuracy": 0.7904156364064524,
     "rows": 42461,
-    "timestamp": "20260807_123527",
+    "timestamp": "20260818_111223",
     "model_type": "balanced",
     "class_distribution": {
         "1": 11900,

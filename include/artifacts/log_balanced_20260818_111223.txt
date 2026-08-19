@@ -5,54 +5,54 @@ MODEL TRAINING REPORT - BALANCED DATA
 BASIC INFORMATION:
 --------------------------------------------------------------------------------
 Model Type: Balanced (2024 + 2025 + 2026)
-Timestamp: 20260807_123527
+Timestamp: 20260818_111223
 Total Rows: 42461
 Test Set Size: 8493
 Train Set Size: 33968
 
 OVERALL METRICS:
 --------------------------------------------------------------------------------
-Accuracy: 0.7954 (79.54%)
+Accuracy: 0.7904 (79.04%)
 
 CONFUSION MATRIX:
 --------------------------------------------------------------------------------
 Rows: True Labels | Columns: Predicted Labels
        Class 0  Class 1  Class 2
-Class 0:    1715     670       0
-Class 1:     925    1222       0
-Class 2:      59      79    3823
+Class 0:    1527     858       0
+Class 1:     722    1425       0
+Class 2:      60     140    3761
 
 CLASSIFICATION REPORT:
 --------------------------------------------------------------------------------
                        precision    recall  f1-score   support
 
-Class 0 (Churn 0-3mo)     0.6354    0.7191    0.6747      2385
-Class 1 (Churn 3-6mo)     0.6200    0.5692    0.5935      2147
-   Class 2 (No Churn)     1.0000    0.9652    0.9823      3961
+Class 0 (Churn 0-3mo)     0.6613    0.6403    0.6506      2385
+Class 1 (Churn 3-6mo)     0.5881    0.6637    0.6236      2147
+   Class 2 (No Churn)     1.0000    0.9495    0.9741      3961
 
-             accuracy                         0.7959      8493
-            macro avg     0.7518    0.7511    0.7501      8493
-         weighted avg     0.8016    0.7959    0.7976      8493
+             accuracy                         0.7904      8493
+            macro avg     0.7498    0.7512    0.7495      8493
+         weighted avg     0.8008    0.7904    0.7947      8493
 
 PER-CLASS METRICS:
 --------------------------------------------------------------------------------
 
 Class 0 (Churn 0-3mo):
-  Precision: 0.6354
-  Recall:    0.7191
-  F1-Score:  0.6747
+  Precision: 0.6613
+  Recall:    0.6403
+  F1-Score:  0.6506
   Support:   2385
 
 Class 1 (Churn 3-6mo):
-  Precision: 0.6200
-  Recall:    0.5692
-  F1-Score:  0.5935
+  Precision: 0.5881
+  Recall:    0.6637
+  F1-Score:  0.6236
   Support:   2147
 
 Class 2 (No Churn):
   Precision: 1.0000
-  Recall:    0.9652
-  F1-Score:  0.9823
+  Recall:    0.9495
+  F1-Score:  0.9741
   Support:   3961
 
 ================================================================================

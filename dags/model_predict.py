@@ -509,15 +509,12 @@ with DAG(
 
             # RegularPayment (float)
             if 'RegularPayment' in features_df.columns:
-                sql_insert_df['RegularPayment'] = pd.to_numeric(features_df['RegularPayment'], errors='coerce').astype('float64')
-            else:
-                sql_insert_df['RegularPayment'] = None
+                sql_insert_df['RegularPayment'] = features_df.get('RegularPayment',None)
+            
 
             # Base Amount (float)
             if 'Base Amount' in features_df.columns:
-                sql_insert_df['Base Amount'] = pd.to_numeric(features_df['Base Amount'], errors='coerce').astype('float64')
-            else:
-                sql_insert_df['Base Amount'] = None
+                sql_insert_df['Base Amount'] = features_df.get('[Base Amount]', None)
 
             # TenureDays (int)
             if 'TenureDays' in features_df.columns:
